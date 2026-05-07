@@ -443,8 +443,7 @@
               clearTimeout(bufferTimer);
               scanBuffer += char;
               bufferTimer = setTimeout(function() {
-                  var cleanCode = scanBuffer.replace(/[^0-9]/g, ''); 
-                  if (cleanCode.length > 1) cleanCode = cleanCode.substring(0, cleanCode.length - 1);
+                  var cleanCode = scanBuffer.replace(/[^0-9]/g, '');
                   if (cleanCode.length >= 3) { processBarcodeLocal(cleanCode); }
                   scanBuffer = ""; document.getElementById('scan-trap').value = ""; 
               }, 50); 
