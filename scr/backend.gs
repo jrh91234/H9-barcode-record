@@ -145,27 +145,42 @@ function forceChangeModel(newModel, passwordInput) {
 // ดึงข้อมูลการผลิตวันนี้
 function getTodayProductionData() {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
-  var sheet = ss.getSheetByName("Data"); // ตรวจสอบชื่อ Sheet ให้ตรงกับที่มีจริง
-  
-  if (!sheet) return JSON.stringify([]);
-  
-  var data = sheet.getDataRange().getValues();
-  var todayStr = new Date().toLocaleDateString("th-TH"); 
-  var todayData = [];
+  var sheet = ss.getSheetByName(LOG_SHEET_NAME);
 
-  for (var i = 1; i < data.length; i++) {
-    var rowDate = "";
+  if (!sheet) return JSON.stringify([]);
+
+  var lastRow = sheet.getLastRow();
+  if (lastRow < 2) return JSON.stringify([]);
+
+  var data = sheet.getRange(2, 1, lastRow - 1, 3).getValues();
+  var now = new Date();
+  var todayDay   = now.getDate();
+  var todayMonth = now.getMonth() + 1;
+  var todayYear  = now.getFullYear() + 543; // ปี พ.ศ.
+  var todayData  = [];
+
+  for (var i = 0; i < data.length; i++) {
+    var rowDay, rowMonth, rowYear, rowHour;
+
     if (data[i][0] instanceof Date) {
-      rowDate = data[i][0].toLocaleDateString("th-TH");
+      var d = data[i][0];
+      rowDay   = d.getDate();
+      rowMonth = d.getMonth() + 1;
+      rowYear  = d.getFullYear() + 543;
+      rowHour  = d.getHours().toString().padStart(2, '0');
     } else {
-      rowDate = String(data[i][0]).split(" ")[0]; 
+      var str      = String(data[i][0]);
+      var datePart = str.split(" ")[0]; // "14/3/2569"
+      var timePart = str.split(" ")[1]; // "8:19:39"
+      var dp = datePart.split("/");
+      rowDay   = parseInt(dp[0]);
+      rowMonth = parseInt(dp[1]);
+      rowYear  = parseInt(dp[2]);
+      rowHour  = (timePart ? timePart.split(":")[0] : "0").padStart(2, '0');
     }
 
-    if (rowDate === todayStr) {
-      todayData.push({
-        model: data[i][2], 
-        timestamp: data[i][0] 
-      });
+    if (rowDay === todayDay && rowMonth === todayMonth && rowYear === todayYear) {
+      todayData.push({ model: data[i][2], hour: rowHour });
     }
   }
   return JSON.stringify(todayData);
