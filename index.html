@@ -1,0 +1,912 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <base target="_top">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Scanner v17.7 Center Light</title>
+    <style>
+      @import url('https://fonts.googleapis.com/css2?family=Sarabun:wght@400;700&family=Roboto+Mono:wght@500&display=swap');
+      
+      body { 
+        font-family: 'Sarabun', sans-serif; 
+        background-color: transparent; 
+        height: 100vh; overflow: hidden; margin: 0; display: flex; flex-direction: column; user-select: none; 
+      }
+      
+      /* --- [UPDATED] ไฟสถานะย้ายมาตรงกลาง --- */
+      #status-light {
+        width: 50px;  /* ใหญ่ขึ้นนิดนึงให้เด่น */
+        height: 50px;
+        border-radius: 50%;
+        background-color: #B0BEC5; /* สีเทา (Standby) */
+        border: 5px solid #fff;
+        box-shadow: 0 4px 8px rgba(0,0,0,0.2), inset 0 2px 5px rgba(0,0,0,0.2);
+        transition: all 0.3s ease;
+        margin-top: 15px;   /* เว้นระยะจากตัวหนังสือข้างบน */
+        margin-bottom: 5px; /* เว้นระยะจากตัวเลขข้างล่าง */
+      }
+
+      /* สถานะไฟเขียว (OK) */
+      .light-green {
+        background-color: #00E676 !important; 
+        box-shadow: 0 0 20px #00E676, inset 0 2px 5px rgba(255,255,255,0.5) !important;
+        transform: scale(1.1);
+      }
+
+      /* สถานะไฟแดง (Error) */
+      .light-red {
+        background-color: #D50000 !important; 
+        box-shadow: 0 0 20px #D50000, inset 0 2px 5px rgba(255,255,255,0.5) !important;
+        animation: blink-red 0.3s infinite;
+      }
+      @keyframes blink-red {
+        50% { opacity: 0.5; transform: scale(0.9); }
+      }
+      /* ----------------------------------------------- */
+
+      #bg-video {
+        position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+        object-fit: cover; z-index: -1; 
+        display: none; background: #000;
+      }
+
+      .header-bar { 
+        background: rgba(255, 255, 255, 0.9); padding: 10px 20px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); 
+        display: flex; justify-content: space-between; align-items: center; z-index: 10;
+        backdrop-filter: blur(5px);
+      }
+      .model-group { cursor: pointer; padding: 5px; border-radius: 5px; transition: 0.2s; }
+      .model-group:hover { background-color: rgba(0,0,0,0.05); }
+      .model-label { font-size: 10px; color: #888; text-transform: uppercase; }
+      .model-name { font-size: 20px; font-weight: bold; color: #1565C0; margin: 0; line-height: 1.2; }
+      .job-name { font-size: 16px; font-weight: bold; color: #E65100; margin: 0; line-height: 1.2; }
+
+      body.dashboard-mode .model-group { pointer-events: none; }
+      body.dashboard-mode #cam-btn { display: none; }
+      body.dashboard-mode .clear-btn { display: none; }
+      body.dashboard-mode #scan-trap { display: none; }
+      body.dashboard-mode .header-bar { background: rgba(255,255,255,0.95); border-bottom: 3px solid #2196F3; }
+
+      .main-content { display: flex; flex: 1; overflow: hidden; position: relative; }
+      .left-panel { flex: 6; display: flex; flex-direction: column; justify-content: center; align-items: center; padding: 20px; gap: 20px; z-index: 2; }
+      
+      .card { 
+        background: rgba(255, 255, 255, 0.85); border-radius: 15px; box-shadow: 0 5px 15px rgba(0,0,0,0.2); 
+        width: 100%; height: 100%; display: flex; flex-direction: column; 
+        justify-content: center; align-items: center; position: relative; 
+        border-bottom: 6px solid #ccc; transition: background 0.3s ease;
+        backdrop-filter: blur(8px);
+      }
+      .card.god-mode { 
+        background: linear-gradient(135deg, rgba(255, 253, 231, 0.9) 0%, rgba(255, 255, 255, 0.9) 100%);
+        border-bottom: 6px solid #ff3d00; box-shadow: 0 0 20px rgba(255, 215, 0, 0.6); 
+      }
+      .god-mode .count-big { color: #ff3d00 !important; }
+      
+      .target-badge { position: absolute; top: 15px; right: 15px; background: rgba(238,238,238,0.9); color: #666; padding: 5px 10px; border-radius: 20px; font-size: 12px; font-weight: bold; display: flex; flex-direction: column; align-items: flex-end; }
+      .god-mode .target-badge { background: #ff6d00; color: white; }
+      
+      .count-big { font-size: 140px; font-weight: bold; color: #333; line-height: 1; margin: 10px 0 20px 0; }
+      .scan-result { font-family: 'Roboto Mono', monospace; font-size: 32px; font-weight: bold; color: #333; height: 40px; text-align: center; width: 100%; }
+      .blink-red { animation: blinker 0.2s linear 2; color: red !important; }
+      @keyframes blinker { 50% { opacity: 0; } }
+
+      .right-panel { 
+        flex: 4; background: rgba(255, 255, 255, 0.7); border-left: 1px solid rgba(0,0,0,0.1); 
+        display: flex; flex-direction: column; padding: 0; overflow: hidden; z-index: 2;
+        backdrop-filter: blur(5px);
+      }
+      
+      #firework-reason-box {
+        display: none; background: #d32f2f; color: white; 
+        padding: 10px; text-align: center; font-weight: bold; 
+        animation: pulse-red 1s infinite;
+      }
+      @keyframes pulse-red { 0% { background: #d32f2f; } 50% { background: #ff5252; } 100% { background: #d32f2f; } }
+
+      .total-summary-box { background: rgba(232, 245, 233, 0.9); padding: 15px; border-bottom: 2px solid #c8e6c9; text-align: center; cursor: pointer; transition: 0.2s; }
+      .total-summary-box:active { transform: scale(0.98); background: #c8e6c9; }
+      .total-label { font-size: 14px; color: #2e7d32; font-weight: bold; }
+      .total-number { font-size: 48px; color: #1b5e20; font-weight: bold; line-height: 1; margin-top: 5px;}
+      .grand-target-label { font-size: 14px; color: #555; margin-top: 5px; font-weight: bold; }
+
+      .hourly-list { flex: 1; overflow-y: auto; padding: 15px; background: transparent; }
+
+      .hour-card { background: rgba(255, 255, 255, 0.9); border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); margin-bottom: 10px; padding: 10px 15px; display: flex; justify-content: space-between; align-items: center; border-left: 4px solid #ccc; }
+      .hour-card.active-hour { background: rgba(255, 255, 255, 0.95); border-left: none; border: 2px solid #2196F3; box-shadow: 0 2px 8px rgba(33, 150, 243, 0.3); }
+      .hour-card.gold-success { background: linear-gradient(to right, rgba(255, 248, 220, 0.95), rgba(255, 255, 255, 0.95)); border-left: none; border: 2px solid #FFC107; box-shadow: 0 2px 8px rgba(255, 193, 7, 0.5); }
+
+      .hour-info { display: flex; flex-direction: column; width: 100%; }
+      .hour-header { display:flex; justify-content:space-between; align-items:center; margin-bottom: 5px; border-bottom: 1px solid #eee; padding-bottom:3px;}
+      .hour-time { font-size: 1.1rem; font-weight: 800; color: #333; }
+      .hour-status-icon { font-size:12px; font-weight:bold; padding: 2px 8px; border-radius:10px; }
+      .active-hour .hour-status-icon { background:#e3f2fd; color:#1565c0; content: "RUNNING"; }
+      .gold-success .hour-status-icon { background:#fff3e0; color:#ef6c00; content: "TARGET HIT"; }
+      .model-item { display: flex; justify-content: space-between; font-size: 0.9rem; color: #555; padding: 2px 0; }
+      .model-item strong { color: #1565C0; font-size: 1.1em;}
+
+      .status-bar { background: rgba(51, 51, 51, 0.9); color: white; padding: 5px 15px; display: flex; justify-content: flex-start; gap: 20px; font-size: 12px; align-items: center; z-index: 10; }
+      
+      .modal-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.8); z-index: 1000; display: none; justify-content: center; align-items: center; backdrop-filter: blur(3px); }
+      .modal-box { background: white; padding: 30px; border-radius: 10px; width: 400px; text-align: center; box-shadow: 0 10px 30px rgba(0,0,0,0.5); }
+      
+      .modal-input { padding: 10px; font-size: 16px; width: 90%; margin: 15px 0; border: 1px solid #ccc; border-radius: 5px; background: #fff;}
+      
+      .btn { padding: 10px 20px; font-size: 18px; cursor: pointer; margin: 5px; border-radius: 5px; border:none;}
+      .btn-primary { background: #1565C0; color: white; }
+      .btn-danger { background: #d32f2f; color: white; }
+      .btn-warning { background: #ff9800; color: white; } 
+      .clear-btn { background: none; border: none; color: #d32f2f; cursor: pointer; font-size: 12px; text-decoration: underline; margin-top:5px; display:block; width:100%; text-align:center;}
+      .version-tag { position: fixed; bottom: 5px; right: 5px; font-size: 10px; color: #ccc; }
+      #scan-trap { position: absolute; top: -1000px; left: -1000px; opacity: 0; }
+      #fireworks-canvas { position: fixed; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; z-index: 999; }
+      #cam-btn { cursor:pointer; font-size:24px; color:#555; margin-left:10px; }
+      #cam-btn:hover { color:#1565C0; }
+    </style>
+  </head>
+  <body onclick="refocusTrap()">
+
+    <video id="bg-video" autoplay muted playsinline></video>
+    <canvas id="fireworks-canvas"></canvas>
+    <div id="dash-indicator" style="display:none; position:fixed; top:5px; left:50%; transform:translateX(-50%); background:blue; color:white; padding:2px 10px; border-radius:10px; font-size:10px; z-index:999;">DASHBOARD MODE (SYNCING)</div>
+    
+    <input type="text" id="scan-trap" autocomplete="off">
+
+    <div class="header-bar">
+      <div style="display:flex; align-items:center;">
+        <div class="model-group" onclick="openJobModal()">
+           <div class="model-label">JOB ORDER ✎</div>
+           <div class="job-name" id="current-job-display">N/A</div>
+        </div>
+        <div class="model-group" style="margin-left: 20px;">
+           <div class="model-label">CURRENT MODEL</div>
+           <div class="model-name" id="current-model-display">Scan to start</div>
+        </div>
+      </div>
+      <div style="text-align:right; display:flex; align-items:center; gap:15px;">
+        <div onclick="toggleCamera()" id="cam-btn" title="Toggle Camera">📷</div>
+        <div>
+          <div id="clock-display" style="font-size:24px; font-weight:bold; color:#333;">00:00</div>
+          <div style="font-size:11px; color:#888;">DB Status: <span id="db-status">...</span></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="main-content">
+      <div class="left-panel">
+        <div class="card" id="main-card">
+          <div class="target-badge" id="target-display">
+              <span>Hr Target: -</span>
+              <span id="daily-target-display" style="font-size:10px; color:#999;">Day Target: -</span>
+          </div>
+          <div style="font-size:16px; color:#888; margin-top:20px;">CURRENT MODEL COUNT</div>
+          
+          <div id="status-light" title="Status Indicator"></div>
+
+          <div class="count-big" id="current-model-count">0</div>
+          <div class="scan-result" id="display-area">READY</div>
+        </div>
+      </div>
+      <div class="right-panel">
+        
+        <div id="firework-reason-box"></div>
+
+        <div class="total-summary-box" onclick="testFireworks()">
+           <div class="total-label">TOTAL TODAY (ALL MODELS)</div>
+           <div class="total-number" id="grand-total-display">0</div>
+           <div class="grand-target-label" id="grand-eff-display">Shift Efficiency: 0%</div>
+        </div>
+        <div class="hourly-list" id="hourly-list-container"></div>
+        <button class="clear-btn" onclick="clearHistory()">Reset History</button>
+      </div>
+    </div>
+
+    <div class="status-bar">
+      <div>Pending: <span id="pending-count">0</span></div>
+      <div id="sync-status" style="margin-left:10px;">System Ready</div>
+    </div>
+
+    <div class="modal-overlay" id="jobModal">
+      <div class="modal-box">
+        <h3>Select Job Order</h3>
+        <select id="job-input" class="modal-input">
+           <option value="">Loading...</option>
+        </select>
+        <br>
+        <button class="btn btn-primary" onclick="saveJobOrder()">Save</button>
+        <button class="btn btn-warning" onclick="enableManualMode()">Manual (No Plan)</button>
+        <button class="btn" onclick="closeJobModal()">Cancel</button>
+      </div>
+    </div>
+
+    <div class="modal-overlay" id="changeModelModal">
+      <div class="modal-box">
+        <h2 style="color:red;">WARNING!</h2>
+        <div id="modal-msg" style="font-size:18px; margin-bottom:10px;"></div>
+        <div id="admin-section" style="display:none;">
+            <input type="password" id="admin-pass" class="modal-input" placeholder="Password (1234)" style="width:50%;">
+            <br>
+            <button class="btn btn-danger" onclick="confirmChangeModel()">Override Switch</button>
+        </div>
+        <button class="btn" onclick="closeModal()">Close</button>
+      </div>
+    </div>
+
+    <div class="modal-overlay" id="jobChangeBigModal">
+      <div class="modal-box" style="width: 600px; padding: 40px; border: 4px solid #E65100;"> 
+        <h2 style="color: #E65100; font-size: 32px; margin-bottom: 20px;">⚠️ ยืนยันเปลี่ยน Model</h2>
+        <div id="job-change-msg" style="font-size: 20px; margin-bottom: 30px; text-align: left; line-height: 1.5; background: #FFF3E0; padding: 20px; border-radius: 10px; color:#333;"></div>
+        <div style="font-size: 18px; margin-bottom: 10px; color: #555;">กรุณาใส่รหัส Admin เพื่อยืนยัน:</div>
+        <input type="password" id="job-admin-pass" class="modal-input" placeholder="Password" style="font-size: 28px; text-align: center; height: 50px; width: 80%;">
+        <br><br>
+        <div style="display: flex; justify-content: center; gap: 20px;">
+            <button class="btn btn-primary" onclick="executeJobChange()" style="font-size: 24px; padding: 15px 40px;">ยืนยัน (Confirm)</button>
+            <button class="btn" onclick="closeJobChangeModal()" style="font-size: 24px; padding: 15px 40px; background: #eee;">ยกเลิก</button>
+        </div>
+      </div>
+    </div>
+    
+    <div class="version-tag">v17.7 (Center Status Light)</div>
+
+    <script>
+      var delayTime = 3000;     
+      var syncInterval = 5000;
+      var configInterval = 10000; 
+      var cloudPollInterval = 10000;
+      
+      var localDB = {};
+      var capDB = {};  
+      var jobDataMap = {}; 
+      
+      var pendingQueue = [];    
+      var currentModel = "";
+      var currentJob = "N/A";   
+      var lastScanTime = 0;
+      var totalCurrentModel = 0; 
+      var productionHistory = JSON.parse(localStorage.getItem('prod_history')) || {};
+      var scanBuffer = "";
+      var bufferTimer;
+      var thaiMap = {'ๅ':'1','/':'2','-':'3','ภ':'4','ถ':'5','ุ':'6','ึ':'7','ค':'8','ต':'9','จ':'0'};
+      var isCameraOn = false;
+      var videoElement = document.getElementById('bg-video');
+
+      var pendingJobVal = "";
+      var pendingModelVal = "";
+
+      const urlParams = new URLSearchParams(window.location.search);
+      const isDashboardMode = urlParams.get('mode') === 'dashboard';
+
+      if(localStorage.getItem('current_job')) currentJob = localStorage.getItem('current_job');
+      
+      if(!isDashboardMode && currentJob !== "N/A" && currentJob !== "MANUAL_MODE") {
+          google.script.run.withSuccessHandler(function(jobs) {
+             jobs.forEach(j => { jobDataMap[j.job] = j.model; });
+          }).getActiveJobOrders();
+      }
+
+      initSystem();
+
+      function initSystem() {
+        if(isDashboardMode) {
+            document.body.classList.add('dashboard-mode');
+            document.getElementById('dash-indicator').style.display = 'block';
+            document.getElementById('display-area').innerText = "VIEW ONLY";
+            setInterval(fetchCloudData, cloudPollInterval);
+            fetchCloudData();
+        }
+
+        var today = new Date().toDateString();
+        var lastDate = localStorage.getItem('prod_date');
+        if (lastDate !== today && !isDashboardMode) {
+            productionHistory = {}; 
+            localStorage.setItem('prod_date', today);
+            localStorage.setItem('prod_history', JSON.stringify(productionHistory));
+        }
+
+        updateJobDisplay();
+        updateClock(); setInterval(updateClock, 1000);
+        
+        if(!isDashboardMode) {
+            setInterval(syncData, syncInterval);
+        }
+        
+        setInterval(syncConfig, configInterval);
+
+        google.script.run.withSuccessHandler(function(m) {
+           currentModel = m;
+           if(currentModel) {
+              document.getElementById('current-model-display').innerText = currentModel;
+              if(!isDashboardMode) restoreHistory();
+           }
+        }).getServerModel();
+
+        google.script.run.withSuccessHandler(function(data) {
+           if(data && data.length > 0) {
+             data.forEach(function(row) { localDB[String(row[1]).trim()] = row[0]; });
+             document.getElementById('db-status').innerText = "OK (" + data.length + ")";
+             document.getElementById('db-status').style.color = "green";
+           } else {
+             document.getElementById('db-status').innerText = "No Data";
+           }
+        }).getOfflineDatabase();
+        
+        syncConfig();
+        if(!isDashboardMode) refocusTrap();
+        requestAnimationFrame(updateFireworks);
+      }
+      
+      // ฟังก์ชันควบคุมไฟสถานะ
+      var statusTimer;
+      function updateStatusLight(status) {
+          var light = document.getElementById('status-light');
+          light.className = ''; 
+          clearTimeout(statusTimer);
+
+          if (status === 'OK') {
+              light.classList.add('light-green');
+              statusTimer = setTimeout(function() { light.className = ''; }, 5000); 
+          } else if (status === 'NG') {
+              light.classList.add('light-red');
+              statusTimer = setTimeout(function() { light.className = ''; }, 5000); 
+          }
+      }
+
+      function updateJobDisplay() {
+          var el = document.getElementById('current-job-display');
+          if (currentJob === "MANUAL_MODE") {
+              el.innerText = "MANUAL (No Check)";
+              el.style.color = "#FF9800";
+          } else {
+              el.innerText = currentJob;
+              el.style.color = "#E65100";
+          }
+      }
+
+      function fetchCloudData() {
+          google.script.run.withSuccessHandler(function(jsonStr) {
+              var cloudData = JSON.parse(jsonStr);
+              var tempHistory = {};
+              cloudData.forEach(function(item) {
+                  var m = item.model;
+                  var timestamp = new Date(item.timestamp);
+                  var h = timestamp.getHours().toString().padStart(2, '0');
+
+                  if(!tempHistory[m]) tempHistory[m] = { total: 0, hourly: {} };
+                  if(!tempHistory[m].hourly) tempHistory[m].hourly = {};
+                  
+                  tempHistory[m].total++;
+                  if(!tempHistory[m].hourly[h]) tempHistory[m].hourly[h] = 0;
+                  tempHistory[m].hourly[h]++;
+              });
+              productionHistory = tempHistory;
+              localStorage.setItem('prod_history', JSON.stringify(productionHistory));
+              updateUI();
+          }).getTodayProductionData();
+      }
+
+      function syncConfig() {
+          google.script.run.withSuccessHandler(function(caps) {
+              capDB = caps || {};
+              updateUI();
+          }).getCapDatabase();
+      }
+      
+      function toggleCamera() {
+          isCameraOn = !isCameraOn;
+          if(isCameraOn) {
+              if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+                  navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } })
+                  .then(function(stream) {
+                      videoElement.srcObject = stream;
+                      videoElement.style.display = "block";
+                  })
+                  .catch(function(err) { alert("Camera Error: " + err); isCameraOn = false; });
+              } else { alert("Camera not supported"); isCameraOn = false; }
+          } else {
+              var stream = videoElement.srcObject;
+              if(stream) { var tracks = stream.getTracks(); tracks.forEach(function(track) { track.stop(); }); }
+              videoElement.srcObject = null;
+              videoElement.style.display = "none";
+          }
+      }
+
+      function refocusTrap() {
+          if(isDashboardMode) return;
+          var modal1 = document.getElementById('changeModelModal').style.display === 'flex';
+          var modal2 = document.getElementById('jobModal').style.display === 'flex';
+          var modal3 = document.getElementById('jobChangeBigModal').style.display === 'flex';
+          if (!modal1 && !modal2 && !modal3) document.getElementById('scan-trap').focus();
+      }
+      setInterval(refocusTrap, 1000);
+
+      document.getElementById('scan-trap').addEventListener('keydown', function(e) { handleScannerInput(e); e.stopPropagation(); });
+      document.addEventListener('keydown', function(e) { 
+          if (e.target.id === 'scan-trap') return; 
+          if (e.target.tagName === 'INPUT' && e.target.type !== 'password') return;
+          if (e.target.id === 'job-admin-pass' || e.target.id === 'admin-pass') return;
+          handleScannerInput(e); 
+      });
+      
+      document.getElementById('job-admin-pass').addEventListener('keydown', function(e) {
+          if (e.key === 'Enter') { executeJobChange(); }
+      });
+
+      function handleScannerInput(e) {
+          if(isDashboardMode) return;
+          if (document.getElementById('changeModelModal').style.display === 'flex') return;
+          if (document.getElementById('jobModal').style.display === 'flex') return;
+          if (document.getElementById('jobChangeBigModal').style.display === 'flex') return;
+          
+          if (e.key === 'Tab' || e.key === 'Enter') { e.preventDefault(); }
+          var char = thaiMap[e.key] || e.key;
+          if (char.length === 1) {
+              clearTimeout(bufferTimer);
+              scanBuffer += char;
+              bufferTimer = setTimeout(function() {
+                  var cleanCode = scanBuffer.replace(/[^0-9]/g, ''); 
+                  if (cleanCode.length > 1) cleanCode = cleanCode.substring(0, cleanCode.length - 1);
+                  if (cleanCode.length >= 3) { processBarcodeLocal(cleanCode); }
+                  scanBuffer = ""; document.getElementById('scan-trap').value = ""; 
+              }, 50); 
+          }
+      }
+
+      function processBarcodeLocal(barcode) {
+          var now = new Date().getTime();
+          var display = document.getElementById('display-area');
+
+          if ((now - lastScanTime) < delayTime) {
+             display.innerText = "TOO FAST!"; display.style.color = "red"; display.classList.add("blink-red");
+             try { playErrorSound(); } catch(e){}
+             updateStatusLight('NG');
+             setTimeout(() => { display.classList.remove("blink-red"); display.innerText = "READY"; display.style.color = "#333"; }, 500);
+             return; 
+          }
+
+          var foundModel = localDB[barcode];
+          if (!foundModel) {
+              display.innerText = "NF: " + barcode; display.style.color = "orange";
+              try { playErrorSound(); } catch(e){}
+              updateStatusLight('NG');
+              return;
+          }
+
+          if (currentJob !== "MANUAL_MODE" && currentJob !== "N/A" && jobDataMap[currentJob]) {
+             var requiredModel = jobDataMap[currentJob];
+             if (requiredModel !== foundModel) {
+                try { playErrorSound(); } catch(e){}
+                updateStatusLight('NG');
+                document.getElementById('modal-msg').innerHTML = 
+                   `<b>Job Order Mismatch!</b><br>` +
+                   `Job: ${currentJob}<br>` +
+                   `Required: <b style='color:green'>${requiredModel}</b><br>` +
+                   `Scanned: <b style='color:red'>${foundModel}</b>`;
+                
+                document.getElementById('admin-section').style.display = 'none'; 
+                document.getElementById('changeModelModal').style.display = 'flex';
+                return;
+             }
+          }
+
+          if (!currentModel) setCurrentModel(foundModel);
+
+          if (foundModel !== currentModel) {
+              try { playErrorSound(); } catch(e){}
+              updateStatusLight('NG');
+              tempNewModel = foundModel;
+              document.getElementById('modal-msg').innerHTML = 
+                  `Current: <b>${currentModel}</b><br>Scanned: <b style='color:red'>${foundModel}</b>`;
+              document.getElementById('admin-section').style.display = 'block';
+              document.getElementById('changeModelModal').style.display = 'flex';
+              document.getElementById('admin-pass').focus();
+              return;
+          }
+
+          lastScanTime = now;
+          display.innerText = barcode; display.style.color = "green"; 
+          try { playSuccessSound(); } catch(e){}
+          updateStatusLight('OK');
+
+          saveToHistory(currentModel);
+          var dateStr = new Date().toLocaleString('th-TH');
+          var record = [dateStr, currentJob, currentModel, barcode, "OK"];
+          pendingQueue.push(record);
+          updateSyncStatus(); 
+          updateUI();
+      }
+
+      function saveToHistory(model) {
+         if(!model) return;
+         if(!productionHistory[model]) productionHistory[model] = { total: 0, hourly: {} };
+         if(!productionHistory[model].hourly) productionHistory[model].hourly = {};
+         productionHistory[model].total = (productionHistory[model].total || 0) + 1;
+         var h = new Date().getHours().toString().padStart(2, '0');
+         if(!productionHistory[model].hourly[h]) productionHistory[model].hourly[h] = 0;
+         productionHistory[model].hourly[h]++;
+         localStorage.setItem('prod_history', JSON.stringify(productionHistory));
+      }
+
+      function restoreHistory() { 
+          productionHistory = JSON.parse(localStorage.getItem('prod_history')) || {};
+          updateUI(); updateSyncStatus(); 
+      }
+
+      function updateUI() {
+        try {
+            var raw = localStorage.getItem('prod_history');
+            productionHistory = JSON.parse(raw) || {};
+            
+            var curData = productionHistory[currentModel];
+            totalCurrentModel = curData ? curData.total : 0;
+            
+            var bigCountEl = document.getElementById('current-model-count');
+            if(bigCountEl) bigCountEl.innerText = totalCurrentModel;
+
+            var card = document.getElementById('main-card');
+            var targetLabel = document.getElementById('target-display');
+            var dailyLabel = document.getElementById('daily-target-display');
+            var grandEffDisplay = document.getElementById('grand-eff-display');
+            var grandTotalDisplay = document.getElementById('grand-total-display');
+            var reasonBox = document.getElementById('firework-reason-box');
+            
+            var currentHour = new Date().getHours().toString().padStart(2, '0');
+            var targetData = capDB[currentModel] || { hourly: 0, daily: 0 };
+            var hrTarget = parseInt(targetData.hourly || 0);
+
+            var currentHourEfficiency = 0;
+            Object.keys(productionHistory).forEach(function(m) {
+                var mData = productionHistory[m];
+                if(mData && mData.hourly && mData.hourly[currentHour]) {
+                    var qty = mData.hourly[currentHour];
+                    var mCap = capDB[m] ? parseInt(capDB[m].hourly) : 0;
+                    if(mCap > 0) currentHourEfficiency += (qty / mCap);
+                }
+            });
+
+            if(targetLabel && card) {
+                if (hrTarget > 0) {
+                   var effPct = (currentHourEfficiency*100).toFixed(0);
+                   targetLabel.innerHTML = `<span>Hr Target: ${hrTarget} (Eff: ${effPct}%)</span>`;
+                   if (currentHourEfficiency >= 1.0) card.classList.add('god-mode');
+                   else card.classList.remove('god-mode');
+                } else {
+                   targetLabel.innerHTML = `<span>Hr Target: N/A</span>`;
+                   card.classList.remove('god-mode');
+                }
+            }
+
+            if(dailyLabel) dailyLabel.innerText = "";
+
+            var grandTotal = 0;
+            var totalShiftEfficiency = 0; 
+            var hasAnyShiftTarget = false;
+            
+            var combinedStats = {};
+            var allHours = new Set();
+            var currentHourInt = new Date().getHours();
+
+            Object.keys(productionHistory).forEach(function(m) {
+                var mData = productionHistory[m];
+                if(!mData) return;
+                grandTotal += (mData.total || 0); 
+                
+                var mDailyTarget = capDB[m] ? parseInt(capDB[m].daily) : 0;
+                if(mDailyTarget > 0) {
+                    totalShiftEfficiency += (mData.total / mDailyTarget);
+                    hasAnyShiftTarget = true;
+                }
+
+                var mHourly = mData.hourly || {};
+                Object.keys(mHourly).forEach(function(h) {
+                    if (!combinedStats[h]) combinedStats[h] = {};
+                    combinedStats[h][m] = mHourly[h];
+                    allHours.add(h);
+                });
+            });
+
+            if(grandTotalDisplay) grandTotalDisplay.innerText = grandTotal;
+            if(grandEffDisplay) {
+                var grandPct = (totalShiftEfficiency * 100).toFixed(1);
+                grandEffDisplay.innerText = `Shift Efficiency: ${grandPct}%`;
+                if(totalShiftEfficiency >= 1.0) grandEffDisplay.style.color = "green";
+                else grandEffDisplay.style.color = "#555";
+            }
+
+            if (hasAnyShiftTarget && totalShiftEfficiency >= 1.0) {
+                if (!isFireworksActive) { 
+                    isFireworksActive = true;
+                    reasonBox.style.display = 'block';
+                    var pctShow = (totalShiftEfficiency * 100).toFixed(0);
+                    reasonBox.innerHTML = `🎉 SHIFT TARGET REACHED!<br>(Capacity: ${pctShow}%)`;
+                }
+            } else {
+                isFireworksActive = false;
+                reasonBox.style.display = 'none';
+            }
+
+            var container = document.getElementById('hourly-list-container');
+            var currentHourStr = currentHourInt.toString().padStart(2, '0');
+            allHours.add(currentHourStr);
+            var sortedHours = Array.from(allHours).sort().reverse(); 
+            var html = "";
+
+            sortedHours.forEach(function(h) {
+               var modelsInHour = combinedStats[h] || {};
+               var modelNames = Object.keys(modelsInHour);
+               var detailsHtml = "";
+               var hourlyEffSum = 0;
+               var hasAnyTarget = false;
+
+               if (modelNames.length === 0) {
+                   detailsHtml = `<div class="model-item">- Waiting -</div>`;
+               } else {
+                   modelNames.forEach(function(m) {
+                      var count = modelsInHour[m];
+                      var mCap = capDB[m] ? parseInt(capDB[m].hourly) : 0;
+                      if(mCap > 0) { hourlyEffSum += (count / mCap); hasAnyTarget = true; }
+                      detailsHtml += `<div class="model-item"><span>${m}</span><strong>${count}</strong></div>`;
+                   });
+               }
+
+               var isCurrentHour = (parseInt(h) === currentHourInt);
+               var cardClass = "hour-card";
+               var statusLabel = "";
+
+               if (hasAnyTarget && hourlyEffSum >= 1.0) {
+                   cardClass = "hour-card gold-success";
+                   statusLabel = `<span class="hour-status-icon">HIT 100%</span>`;
+               } 
+               else if (isCurrentHour) {
+                   cardClass = "hour-card active-hour";
+                   var pct = (hourlyEffSum * 100).toFixed(0);
+                   statusLabel = `<span class="hour-status-icon">RUNNING (${pct}%)</span>`;
+               }
+               html += `<div class="${cardClass}"><div class="hour-info"><div class="hour-header"><div class="hour-time">${h}:00</div>${statusLabel}</div><div>${detailsHtml}</div></div></div>`;
+            });
+            if(container) container.innerHTML = html;
+        } catch(e) { console.error("UI Error: " + e.message); }
+      }
+
+      function openJobModal() {
+          if(isDashboardMode) return;
+          
+          var selectBox = document.getElementById('job-input');
+          selectBox.innerHTML = '<option value="">Loading...</option>';
+          document.getElementById('jobModal').style.display = 'flex';
+          
+          google.script.run.withSuccessHandler(function(jobs) {
+              selectBox.innerHTML = "";
+              jobDataMap = {}; 
+
+              if (jobs.length === 0 || (jobs.length === 1 && jobs[0].error)) {
+                  var option = document.createElement("option");
+                  option.text = "No Active Jobs Found";
+                  selectBox.add(option);
+              } else {
+                  var defaultOption = document.createElement("option");
+                  defaultOption.text = "-- Select Job --";
+                  defaultOption.value = "";
+                  selectBox.add(defaultOption);
+
+                  jobs.forEach(function(j) {
+                      var option = document.createElement("option");
+                      option.text = `${j.job} (Model: ${j.model})`;
+                      option.value = j.job;
+                      jobDataMap[j.job] = j.model; 
+                      
+                      if (j.job === currentJob) option.selected = true;
+                      selectBox.add(option);
+                  });
+              }
+          }).getActiveJobOrders();
+      }
+      
+      function enableManualMode() {
+         if(confirm("Enable Manual Mode?\n(Scan ANY model without verification)")) {
+             currentJob = "MANUAL_MODE";
+             localStorage.setItem('current_job', currentJob);
+             updateJobDisplay();
+             closeJobModal();
+         }
+      }
+      
+      function closeJobModal() { document.getElementById('jobModal').style.display = 'none'; refocusTrap(); }
+      
+      function saveJobOrder() {
+          var val = document.getElementById('job-input').value.trim();
+          
+          if(val && val !== "No Active Jobs Found") {
+              var selectedModel = jobDataMap[val];
+
+              if (currentModel && selectedModel && selectedModel !== currentModel) {
+                  
+                  pendingJobVal = val;
+                  pendingModelVal = selectedModel;
+
+                  var msgHtml = 
+                      `<b>Job ใหม่:</b> ${val} <br>` +
+                      `<b>Model ใหม่:</b> <span style='color:green'>${selectedModel}</span> <br>` +
+                      `---------------------------------------<br>` +
+                      `<b>ขณะนี้รัน:</b> <span style='color:red'>${currentModel}</span>`;
+                  
+                  document.getElementById('job-change-msg').innerHTML = msgHtml;
+                  document.getElementById('job-admin-pass').value = ""; 
+                  
+                  document.getElementById('jobModal').style.display = 'none'; 
+                  document.getElementById('jobChangeBigModal').style.display = 'flex'; 
+                  document.getElementById('job-admin-pass').focus();
+                  return; 
+              }
+              applyJobChange(val, selectedModel);
+          }
+      }
+
+      function executeJobChange() {
+          var pass = document.getElementById('job-admin-pass').value;
+          if (pass === "1234") {
+              applyJobChange(pendingJobVal, pendingModelVal); 
+              closeJobChangeModal(); 
+          } else {
+              alert("❌ รหัสผ่านไม่ถูกต้อง!");
+              document.getElementById('job-admin-pass').value = "";
+              document.getElementById('job-admin-pass').focus();
+          }
+      }
+
+      function closeJobChangeModal() {
+          document.getElementById('jobChangeBigModal').style.display = 'none';
+          refocusTrap();
+      }
+
+      function applyJobChange(jobVal, modelVal) {
+          currentJob = jobVal;
+          localStorage.setItem('current_job', currentJob);
+          
+          if (!currentModel || (modelVal && currentModel !== modelVal)) {
+               setCurrentModel(modelVal);
+          }
+          
+          updateJobDisplay();
+          if(document.getElementById('jobModal').style.display === 'flex') {
+              closeJobModal();
+          }
+      }
+
+      var tempNewModel = "";
+      function setCurrentModel(model) {
+          currentModel = model; document.getElementById('current-model-display').innerText = currentModel;
+          google.script.run.setServerModel(currentModel); restoreHistory();
+      }
+      function confirmChangeModel() {
+         var pass = document.getElementById('admin-pass').value;
+         if(pass === "1234") { setCurrentModel(tempNewModel); closeModal(); } else { alert("Wrong Password"); }
+      }
+      function closeModal() { document.getElementById('changeModelModal').style.display = 'none'; document.getElementById('admin-pass').value = ""; refocusTrap(); }
+
+      function syncData() {
+         if (pendingQueue.length === 0) return; 
+         var batchToSend = pendingQueue.slice(); 
+         document.getElementById('sync-status').innerText = "Syncing..."; 
+         document.getElementById('sync-status').style.color = "#FFD700"; 
+         google.script.run.withSuccessHandler(function(res) {
+             pendingQueue.splice(0, batchToSend.length); 
+             document.getElementById('sync-status').innerText = "Synced";
+             document.getElementById('sync-status').style.color = "#00e676"; 
+             updateSyncStatus();
+         }).withFailureHandler(function(err){
+             document.getElementById('sync-status').innerText = "Err: " + err.message;
+             document.getElementById('sync-status').style.color = "red";
+         }).saveBatchData(JSON.stringify(batchToSend));
+      }
+      function updateSyncStatus() { var el = document.getElementById('pending-count'); if(el) el.innerText = pendingQueue.length; }
+      function updateClock() { document.getElementById('clock-display').innerText = new Date().toLocaleTimeString('th-TH', {hour:'2-digit', minute:'2-digit'}); }
+      function clearHistory() {
+         if(confirm("Reset History?")) {
+            productionHistory = {}; localStorage.setItem('prod_history', JSON.stringify(productionHistory));
+            updateUI();
+         }
+         refocusTrap(); 
+      }
+      
+      var audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      
+      // เสียง Fanfare (เชียร์) ตามที่เลือกล่าสุด
+      function playSuccessSound() {
+        if (audioCtx.state === 'suspended') audioCtx.resume();
+        var now = audioCtx.currentTime;
+
+        function playNote(freq, startTime, duration, type) {
+            var o = audioCtx.createOscillator();
+            var g = audioCtx.createGain();
+            o.connect(g);
+            g.connect(audioCtx.destination);
+            o.type = type; 
+            o.frequency.value = freq;
+            g.gain.setValueAtTime(0.1, startTime);
+            g.gain.linearRampToValueAtTime(0.1, startTime + duration - 0.05);
+            g.gain.exponentialRampToValueAtTime(0.001, startTime + duration);
+            o.start(startTime);
+            o.stop(startTime + duration);
+        }
+
+        // Melody: C5 E5 G5 -> High C6 (Fanfare)
+        playNote(523.25, now + 0.00, 0.1, 'triangle'); 
+        playNote(659.25, now + 0.10, 0.1, 'triangle'); 
+        playNote(783.99, now + 0.20, 0.1, 'triangle'); 
+        
+        var oLast = audioCtx.createOscillator();
+        var gLast = audioCtx.createGain();
+        oLast.connect(gLast);
+        gLast.connect(audioCtx.destination);
+        oLast.type = 'square'; 
+        oLast.frequency.setValueAtTime(1046.50, now + 0.30);
+        
+        var vibrato = audioCtx.createOscillator();
+        var vibratoGain = audioCtx.createGain();
+        vibrato.frequency.value = 10; 
+        vibrato.connect(vibratoGain);
+        vibratoGain.gain.value = 10; 
+        vibratoGain.connect(oLast.frequency);
+        vibrato.start(now + 0.30);
+        vibrato.stop(now + 1.0);
+
+        gLast.gain.setValueAtTime(0.1, now + 0.30);
+        gLast.gain.exponentialRampToValueAtTime(0.001, now + 1.0); 
+
+        oLast.start(now + 0.30);
+        oLast.stop(now + 1.0);
+      }
+
+      function playErrorSound() {
+        if (audioCtx.state === 'suspended') audioCtx.resume();
+        var o = audioCtx.createOscillator(); o.type = 'sawtooth'; o.frequency.value = 150; 
+        o.connect(audioCtx.destination); o.start(); o.stop(audioCtx.currentTime + 0.5); 
+      }
+
+      var canvas = document.getElementById('fireworks-canvas');
+      var ctx = canvas.getContext('2d');
+      var particles = [];
+      var isFireworksActive = false;
+      function resizeCanvas() { canvas.width = window.innerWidth; canvas.height = window.innerHeight; }
+      window.addEventListener('resize', resizeCanvas);
+      resizeCanvas();
+      
+      function testFireworks() {
+          isFireworksActive = !isFireworksActive;
+          if(isFireworksActive) requestAnimationFrame(updateFireworks);
+      }
+
+      function createFirework() {
+          var x = Math.random() * canvas.width;
+          var y = canvas.height;
+          var color = `hsl(${Math.random() * 360}, 100%, 60%)`;
+          for (var i = 0; i < 40; i++) {
+              particles.push({
+                  x: x, y: y * 0.5 + Math.random() * y * 0.3,
+                  vx: (Math.random() - 0.5) * 15, vy: (Math.random() - 0.5) * 15, alpha: 1, color: color
+              });
+          }
+      }
+      function updateFireworks() {
+          if (!isFireworksActive) {
+             ctx.clearRect(0, 0, canvas.width, canvas.height);
+             particles = [];
+             return; 
+          }
+          ctx.globalCompositeOperation = 'destination-out';
+          ctx.fillStyle = 'rgba(0, 0, 0, 0.1)'; 
+          ctx.fillRect(0, 0, canvas.width, canvas.height);
+          ctx.globalCompositeOperation = 'source-over';
+          if (Math.random() < 0.05) createFirework(); 
+          particles.forEach((p, index) => {
+              p.x += p.vx; p.y += p.vy; p.vy += 0.2; p.alpha -= 0.015;
+              ctx.fillStyle = p.color; ctx.globalAlpha = p.alpha;
+              ctx.beginPath(); ctx.arc(p.x, p.y, 4, 0, Math.PI * 2); ctx.fill();
+              if (p.alpha <= 0) particles.splice(index, 1);
+          });
+          requestAnimationFrame(updateFireworks);
+      }
+      requestAnimationFrame(updateFireworks);
+    </script>
+  </body>
+</html>
