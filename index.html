@@ -368,12 +368,11 @@
               var tempHistory = {};
               cloudData.forEach(function(item) {
                   var m = item.model;
-                  var timestamp = new Date(item.timestamp);
-                  var h = timestamp.getHours().toString().padStart(2, '0');
+                  var h = item.hour;
 
                   if(!tempHistory[m]) tempHistory[m] = { total: 0, hourly: {} };
                   if(!tempHistory[m].hourly) tempHistory[m].hourly = {};
-                  
+
                   tempHistory[m].total++;
                   if(!tempHistory[m].hourly[h]) tempHistory[m].hourly[h] = 0;
                   tempHistory[m].hourly[h]++;
