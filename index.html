@@ -65,6 +65,7 @@
       body.dashboard-mode #cam-btn { display: none; }
       body.dashboard-mode .clear-btn { display: none; }
       body.dashboard-mode #scan-trap { display: none; }
+      body.dashboard-mode #test-mode-btn { display: none; }
       body.dashboard-mode .header-bar { background: rgba(255,255,255,0.95); border-bottom: 3px solid #2196F3; }
 
       .main-content { display: flex; flex: 1; overflow: hidden; position: relative; }
@@ -142,6 +143,12 @@
       #fireworks-canvas { position: fixed; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; z-index: 999; }
       #cam-btn { cursor:pointer; font-size:24px; color:#555; margin-left:10px; }
       #cam-btn:hover { color:#1565C0; }
+
+      /* Test Mode */
+      #test-mode-banner { display:none; background:#FF6F00; color:#fff; text-align:center; font-weight:bold; font-size:13px; padding:5px; letter-spacing:1px; z-index:11; }
+      #test-mode-btn { cursor:pointer; font-size:12px; font-weight:bold; padding:4px 10px; border-radius:12px; border:2px solid #FF6F00; color:#FF6F00; background:transparent; transition:0.2s; white-space:nowrap; }
+      #test-mode-btn.active { background:#FF6F00; color:#fff; }
+      body.test-mode .card { border-bottom: 6px solid #FF6F00; box-shadow: 0 0 20px rgba(255,111,0,0.4); }
     </style>
   </head>
   <body onclick="refocusTrap()">
@@ -149,6 +156,7 @@
     <video id="bg-video" autoplay muted playsinline></video>
     <canvas id="fireworks-canvas"></canvas>
     <div id="dash-indicator" style="display:none; position:fixed; top:5px; left:50%; transform:translateX(-50%); background:blue; color:white; padding:2px 10px; border-radius:10px; font-size:10px; z-index:999;">DASHBOARD MODE (SYNCING)</div>
+    <div id="test-mode-banner">⚠ TEST MODE — ข้อมูลจะไม่ถูกบันทึกลง Sheet ⚠</div>
     
     <input type="text" id="scan-trap" autocomplete="off">
 
@@ -164,6 +172,7 @@
         </div>
       </div>
       <div style="text-align:right; display:flex; align-items:center; gap:15px;">
+        <button id="test-mode-btn" onclick="toggleTestMode()" title="Test Mode — ทดลองสแกนโดยไม่บันทึกลง Sheet">TEST MODE</button>
         <div onclick="toggleCamera()" id="cam-btn" title="Toggle Camera">📷</div>
         <div>
           <div id="clock-display" style="font-size:24px; font-weight:bold; color:#333;">00:00</div>
@@ -272,6 +281,7 @@
 
       var pendingJobVal = "";
       var pendingModelVal = "";
+      var isTestMode = false;
 
       const urlParams = new URLSearchParams(window.location.search);
       const isDashboardMode = urlParams.get('mode') === 'dashboard';
@@ -506,10 +516,12 @@
           updateStatusLight('OK');
 
           saveToHistory(currentModel);
-          var dateStr = new Date().toLocaleString('th-TH');
-          var record = [dateStr, currentJob, currentModel, barcode, "OK"];
-          pendingQueue.push(record);
-          updateSyncStatus(); 
+          if (!isTestMode) {
+            var dateStr = new Date().toLocaleString('th-TH');
+            var record = [dateStr, currentJob, currentModel, barcode, "OK"];
+            pendingQueue.push(record);
+          }
+          updateSyncStatus();
           updateUI();
       }
 
@@ -799,11 +811,40 @@
       function updateSyncStatus() { var el = document.getElementById('pending-count'); if(el) el.innerText = pendingQueue.length; }
       function updateClock() { document.getElementById('clock-display').innerText = new Date().toLocaleTimeString('th-TH', {hour:'2-digit', minute:'2-digit'}); }
       function clearHistory() {
-         if(confirm("Reset History?")) {
-            productionHistory = {}; localStorage.setItem('prod_history', JSON.stringify(productionHistory));
+         var msg = isTestMode
+            ? "ล้างยอดทดลองสแกน?\n(ข้อมูล Test Mode ไม่ได้ถูกบันทึกลง Sheet อยู่แล้ว)"
+            : "Reset History?\n(ล้างเฉพาะหน้าจอ ข้อมูลใน Sheet ยังคงอยู่)";
+         if(confirm(msg)) {
+            productionHistory = {};
+            localStorage.setItem('prod_history', JSON.stringify(productionHistory));
             updateUI();
          }
-         refocusTrap(); 
+         refocusTrap();
+      }
+
+      function toggleTestMode() {
+         isTestMode = !isTestMode;
+         var btn = document.getElementById('test-mode-btn');
+         var banner = document.getElementById('test-mode-banner');
+         if (isTestMode) {
+            btn.classList.add('active');
+            banner.style.display = 'block';
+            document.body.classList.add('test-mode');
+            document.getElementById('sync-status').innerText = "TEST MODE — ไม่บันทึก";
+            document.getElementById('sync-status').style.color = "#FF6F00";
+         } else {
+            btn.classList.remove('active');
+            banner.style.display = 'none';
+            document.body.classList.remove('test-mode');
+            document.getElementById('sync-status').innerText = "System Ready";
+            document.getElementById('sync-status').style.color = "white";
+            if (confirm("ปิด Test Mode\nต้องการล้างยอดทดลองสแกนออกจากหน้าจอด้วยหรือไม่?")) {
+               productionHistory = {};
+               localStorage.setItem('prod_history', JSON.stringify(productionHistory));
+               updateUI();
+            }
+         }
+         refocusTrap();
       }
       
       var audioCtx = new (window.AudioContext || window.webkitAudioContext)();
