@@ -142,6 +142,62 @@ function forceChangeModel(newModel, passwordInput) {
   }
 }
 
+// 5. ลบข้อมูลของวันนี้ออกจาก Log sheet (ใช้สำหรับ Reset History จริง)
+function clearTodayLogData() {
+  try {
+    var ss = SpreadsheetApp.getActiveSpreadsheet();
+    var sheet = ss.getSheetByName(LOG_SHEET_NAME);
+    if (!sheet) return "Error: Sheet Not Found";
+
+    var lastRow = sheet.getLastRow();
+    if (lastRow < 2) return "Empty";
+
+    var now = new Date();
+    var todayDay   = now.getDate();
+    var todayMonth = now.getMonth() + 1;
+    var todayYear  = now.getFullYear() + 543;
+
+    var data = sheet.getRange(2, 1, lastRow - 1, 1).getValues();
+    var rowsToDelete = [];
+
+    for (var i = data.length - 1; i >= 0; i--) {
+      var cell = data[i][0];
+      var rowDay, rowMonth, rowYear;
+
+      if (cell instanceof Date) {
+        rowDay   = cell.getDate();
+        rowMonth = cell.getMonth() + 1;
+        rowYear  = cell.getFullYear() + 543;
+      } else {
+        var str      = String(cell);
+        var datePart = str.split(" ")[0];
+        var dp = datePart.split("/");
+        rowDay   = parseInt(dp[0]);
+        rowMonth = parseInt(dp[1]);
+        rowYear  = parseInt(dp[2]);
+      }
+
+      if (rowDay === todayDay && rowMonth === todayMonth && rowYear === todayYear) {
+        rowsToDelete.push(i + 2); // +2 เพราะ header 1 แถว + index เริ่มจาก 0
+      }
+    }
+
+    if (rowsToDelete.length === 0) return "Empty";
+
+    var lock = LockService.getScriptLock();
+    if (lock.tryLock(15000)) {
+      rowsToDelete.forEach(function(r) { sheet.deleteRow(r); });
+      SpreadsheetApp.flush();
+      lock.releaseLock();
+      return "Cleared " + rowsToDelete.length;
+    } else {
+      return "Error: Server Busy";
+    }
+  } catch (e) {
+    return "Error: " + e.message;
+  }
+}
+
 // ดึงข้อมูลการผลิตวันนี้
 function getTodayProductionData() {
   var ss = SpreadsheetApp.getActiveSpreadsheet();

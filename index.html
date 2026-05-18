@@ -799,11 +799,26 @@
       function updateSyncStatus() { var el = document.getElementById('pending-count'); if(el) el.innerText = pendingQueue.length; }
       function updateClock() { document.getElementById('clock-display').innerText = new Date().toLocaleTimeString('th-TH', {hour:'2-digit', minute:'2-digit'}); }
       function clearHistory() {
-         if(confirm("Reset History?")) {
-            productionHistory = {}; localStorage.setItem('prod_history', JSON.stringify(productionHistory));
+         if(confirm("⚠️ Reset History?\n\nการกระทำนี้จะ:\n1. ลบข้อมูลวันนี้ออกจาก Google Sheet\n2. ล้างประวัติบนหน้าจอ\n\nยืนยันหรือไม่?")) {
+            pendingQueue = [];
+            updateSyncStatus();
+            productionHistory = {};
+            localStorage.setItem('prod_history', JSON.stringify(productionHistory));
             updateUI();
+            document.getElementById('sync-status').innerText = "Clearing...";
+            document.getElementById('sync-status').style.color = "#FFD700";
+            google.script.run
+               .withSuccessHandler(function(res) {
+                  document.getElementById('sync-status').innerText = "Cleared (" + res + ")";
+                  document.getElementById('sync-status').style.color = "#00e676";
+               })
+               .withFailureHandler(function(err) {
+                  document.getElementById('sync-status').innerText = "Clear Error: " + err.message;
+                  document.getElementById('sync-status').style.color = "red";
+               })
+               .clearTodayLogData();
          }
-         refocusTrap(); 
+         refocusTrap();
       }
       
       var audioCtx = new (window.AudioContext || window.webkitAudioContext)();
