@@ -700,10 +700,11 @@
 
                   jobs.forEach(function(j) {
                       var option = document.createElement("option");
-                      option.text = `${j.job} (Model: ${j.model})`;
+                      var qtyText = j.qty ? ` | Qty: ${j.qty}` : '';
+                      option.text = `${j.job} (Model: ${j.model}${qtyText})`;
                       option.value = j.job;
-                      jobDataMap[j.job] = j.model; 
-                      
+                      jobDataMap[j.job] = j.model;
+
                       if (j.job === currentJob) option.selected = true;
                       selectBox.add(option);
                   });

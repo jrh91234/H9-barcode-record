@@ -73,17 +73,18 @@ function getActiveJobOrders() {
     var lastRow = sheet.getLastRow();
     if (lastRow < 2) return [];
 
-    // Job Order = Col D (Index 3), Model = Col G (Index 6), Progress = Col K (Index 10)
+    // Job Order = Col D (Index 3), Model = Col G (Index 6), Qty = Col H (Index 7), Progress = Col K (Index 10)
     var data = sheet.getRange(2, 1, lastRow - 1, 11).getValues();
     var activeJobs = [];
-    
+
     data.forEach(function(row) {
-      var jobOrder = String(row[3]).trim(); 
+      var jobOrder = String(row[3]).trim();
       var orderModel = String(row[6]).trim();
-      var progress = row[10];              
-      
+      var qty = row[7];
+      var progress = row[10];
+
       if (jobOrder !== "" && (progress === "" || parseFloat(progress) < 100)) {
-        activeJobs.push({ job: jobOrder, model: orderModel });
+        activeJobs.push({ job: jobOrder, model: orderModel, qty: qty || 0 });
       }
     });
     
