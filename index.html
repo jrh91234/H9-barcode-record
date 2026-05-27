@@ -282,6 +282,7 @@
       var pendingJobVal = "";
       var pendingModelVal = "";
       var isTestMode = false;
+      var preTestHistory = null; // snapshot ข้อมูลจริงก่อนเข้า Test Mode
 
       const urlParams = new URLSearchParams(window.location.search);
       const isDashboardMode = urlParams.get('mode') === 'dashboard';
@@ -827,6 +828,8 @@
          var btn = document.getElementById('test-mode-btn');
          var banner = document.getElementById('test-mode-banner');
          if (isTestMode) {
+            // บันทึก snapshot ข้อมูลจริงก่อนเข้า Test Mode
+            preTestHistory = JSON.parse(JSON.stringify(productionHistory));
             btn.classList.add('active');
             banner.style.display = 'block';
             document.body.classList.add('test-mode');
@@ -838,8 +841,10 @@
             document.body.classList.remove('test-mode');
             document.getElementById('sync-status').innerText = "System Ready";
             document.getElementById('sync-status').style.color = "white";
-            if (confirm("ปิด Test Mode\nต้องการล้างยอดทดลองสแกนออกจากหน้าจอด้วยหรือไม่?")) {
-               productionHistory = {};
+            // คืนข้อมูลจริงจาก snapshot (ยอดทดลองจะหาย แต่ยอดจริงกลับมา)
+            if (preTestHistory !== null) {
+               productionHistory = preTestHistory;
+               preTestHistory = null;
                localStorage.setItem('prod_history', JSON.stringify(productionHistory));
                updateUI();
             }
