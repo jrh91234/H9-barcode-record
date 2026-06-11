@@ -308,7 +308,7 @@
       
       if(isGoogleScriptReady() && !isDashboardMode && currentJob !== "N/A" && currentJob !== "MANUAL_MODE") {
           google.script.run.withSuccessHandler(function(jobs) {
-             if(jobs && !jobs[0]?.error) jobs.forEach(j => { jobDataMap[j.job] = j.model; });
+             if(jobs && !jobs[0]?.error) jobs.forEach(j => { jobDataMap[j.job] = { model: j.model, qty: j.qty }; });
           }).withFailureHandler(function(err) {
              console.error("Init getActiveJobOrders failed:", err);
           }).getActiveJobOrders();
@@ -391,6 +391,9 @@
           if (currentJob === "MANUAL_MODE") {
               el.innerText = "MANUAL (No Check)";
               el.style.color = "#FF9800";
+          } else if (currentJob && currentJob !== "N/A" && jobDataMap[currentJob]) {
+              el.innerText = currentJob + " (Plan: " + jobDataMap[currentJob].qty + ")";
+              el.style.color = "#E65100";
           } else {
               el.innerText = currentJob;
               el.style.color = "#E65100";
@@ -516,11 +519,11 @@
           }
 
           if (currentJob !== "MANUAL_MODE" && currentJob !== "N/A" && jobDataMap[currentJob]) {
-             var requiredModel = jobDataMap[currentJob];
+             var requiredModel = jobDataMap[currentJob].model;
              if (requiredModel !== foundModel) {
                 try { playErrorSound(); } catch(e){}
                 updateStatusLight('NG');
-                document.getElementById('modal-msg').innerHTML = 
+                document.getElementById('modal-msg').innerHTML =
                    `<b>Job Order Mismatch!</b><br>` +
                    `Job: ${currentJob}<br>` +
                    `Required: <b style='color:green'>${requiredModel}</b><br>` +
@@ -749,9 +752,9 @@
 
                   jobs.forEach(function(j) {
                       var option = document.createElement("option");
-                      option.text = `${j.job} (Model: ${j.model})`;
+                      option.text = `${j.job} | ${j.model} | Plan: ${j.qty}`;
                       option.value = j.job;
-                      jobDataMap[j.job] = j.model;
+                      jobDataMap[j.job] = { model: j.model, qty: j.qty };
 
                       if (j.job === currentJob) option.selected = true;
                       selectBox.add(option);
@@ -782,16 +785,18 @@
           var val = document.getElementById('job-input').value.trim();
           
           if(val && val !== "No Incomplete Jobs Found") {
-              var selectedModel = jobDataMap[val];
+              var jobInfo = jobDataMap[val];
+              var selectedModel = jobInfo ? jobInfo.model : null;
 
               if (currentModel && selectedModel && selectedModel !== currentModel) {
-                  
+
                   pendingJobVal = val;
                   pendingModelVal = selectedModel;
 
-                  var msgHtml = 
+                  var msgHtml =
                       `<b>Job ใหม่:</b> ${val} <br>` +
                       `<b>Model ใหม่:</b> <span style='color:green'>${selectedModel}</span> <br>` +
+                      `<b>Plan จำนวน:</b> ${jobInfo.qty} <br>` +
                       `---------------------------------------<br>` +
                       `<b>ขณะนี้รัน:</b> <span style='color:red'>${currentModel}</span>`;
                   
