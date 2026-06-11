@@ -90,6 +90,7 @@ function getActiveJobOrders() {
     data.forEach(function(row) {
       var jobOrder = String(row[3]).trim();
       var orderModel = String(row[6]).trim();
+      var planQty = row[7] || 0;
 
       if (jobOrder === "") return;
 
@@ -98,7 +99,7 @@ function getActiveJobOrders() {
         if (actualCompleteDate !== "" && actualCompleteDate !== "incomplete") return;
       }
 
-      activeJobs.push({ job: jobOrder, model: orderModel });
+      activeJobs.push({ job: jobOrder, model: orderModel, qty: planQty });
     });
     
     return activeJobs;
