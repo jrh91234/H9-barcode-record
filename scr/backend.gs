@@ -62,7 +62,7 @@ function getCapDatabase() {
   }
 }
 
-// 3. ดึง Job Order ที่ยังไม่เสร็จจาก Plan
+// 3. ดึง Job Order ที่มี Status = Incomplete จาก Plan
 function getActiveJobOrders() {
   try {
     var ss = SpreadsheetApp.openById(CAP_SPREADSHEET_ID);
@@ -73,16 +73,26 @@ function getActiveJobOrders() {
     var lastRow = sheet.getLastRow();
     if (lastRow < 2) return [];
 
-    // Job Order = Col D (Index 3), Model = Col G (Index 6), Progress = Col K (Index 10)
-    var data = sheet.getRange(2, 1, lastRow - 1, 11).getValues();
+    // Job Order = Col D (Index 3), Model = Col G (Index 6), Status = header "Status" (fallback Col K / Index 10)
+    var lastCol = Math.max(sheet.getLastColumn(), 11);
+    var headers = sheet.getRange(1, 1, 1, lastCol).getValues()[0];
+    var statusColIndex = 10;
+
+    headers.forEach(function(header, index) {
+      if (String(header).trim().toLowerCase() === "status") {
+        statusColIndex = index;
+      }
+    });
+
+    var data = sheet.getRange(2, 1, lastRow - 1, lastCol).getValues();
     var activeJobs = [];
     
     data.forEach(function(row) {
       var jobOrder = String(row[3]).trim(); 
       var orderModel = String(row[6]).trim();
-      var progress = row[10];              
+      var status = String(row[statusColIndex]).trim().toLowerCase();
       
-      if (jobOrder !== "" && (progress === "" || parseFloat(progress) < 100)) {
+      if (jobOrder !== "" && status === "incomplete") {
         activeJobs.push({ job: jobOrder, model: orderModel });
       }
     });
