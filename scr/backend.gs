@@ -94,8 +94,8 @@ function getActiveJobOrders() {
       if (jobOrder === "") return;
 
       if (actualCompleteDateColIndex >= 0) {
-        var actualCompleteDate = String(row[actualCompleteDateColIndex]).trim();
-        if (actualCompleteDate !== "") return;
+        var actualCompleteDate = String(row[actualCompleteDateColIndex]).trim().toLowerCase();
+        if (actualCompleteDate !== "" && actualCompleteDate !== "incomplete") return;
       }
 
       activeJobs.push({ job: jobOrder, model: orderModel });
