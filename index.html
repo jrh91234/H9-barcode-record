@@ -308,7 +308,9 @@
       
       if(isGoogleScriptReady() && !isDashboardMode && currentJob !== "N/A" && currentJob !== "MANUAL_MODE") {
           google.script.run.withSuccessHandler(function(jobs) {
-             jobs.forEach(j => { jobDataMap[j.job] = j.model; });
+             if(jobs && !jobs[0]?.error) jobs.forEach(j => { jobDataMap[j.job] = j.model; });
+          }).withFailureHandler(function(err) {
+             console.error("Init getActiveJobOrders failed:", err);
           }).getActiveJobOrders();
       }
 
@@ -731,11 +733,13 @@
 
           google.script.run.withSuccessHandler(function(jobs) {
               selectBox.innerHTML = "";
-              jobDataMap = {}; 
+              jobDataMap = {};
 
               if (jobs.length === 0 || (jobs.length === 1 && jobs[0].error)) {
                   var option = document.createElement("option");
-                  option.text = "No Incomplete Jobs Found";
+                  option.text = jobs.length === 1 && jobs[0].error
+                      ? "Error: " + jobs[0].error
+                      : "No Incomplete Jobs Found";
                   selectBox.add(option);
               } else {
                   var defaultOption = document.createElement("option");
@@ -747,12 +751,19 @@
                       var option = document.createElement("option");
                       option.text = `${j.job} (Model: ${j.model})`;
                       option.value = j.job;
-                      jobDataMap[j.job] = j.model; 
-                      
+                      jobDataMap[j.job] = j.model;
+
                       if (j.job === currentJob) option.selected = true;
                       selectBox.add(option);
                   });
               }
+          }).withFailureHandler(function(err) {
+              selectBox.innerHTML = "";
+              var option = document.createElement("option");
+              option.text = "Error loading jobs";
+              option.value = "";
+              selectBox.add(option);
+              console.error("getActiveJobOrders failed:", err);
           }).getActiveJobOrders();
       }
       

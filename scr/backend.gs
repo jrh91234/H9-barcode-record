@@ -76,7 +76,7 @@ function getActiveJobOrders() {
     // Job Order = Col D (Index 3), Model = Col G (Index 6), Incomplete = header "Actual complete date" is blank
     var lastCol = Math.max(sheet.getLastColumn(), 11);
     var headers = sheet.getRange(1, 1, 1, lastCol).getValues()[0];
-    var actualCompleteDateColIndex = 10; // fallback Col K / Index 10
+    var actualCompleteDateColIndex = -1; // -1 = not found
 
     headers.forEach(function(header, index) {
       if (String(header).trim().toLowerCase() === "actual complete date") {
@@ -86,15 +86,19 @@ function getActiveJobOrders() {
 
     var data = sheet.getRange(2, 1, lastRow - 1, lastCol).getValues();
     var activeJobs = [];
-    
+
     data.forEach(function(row) {
-      var jobOrder = String(row[3]).trim(); 
+      var jobOrder = String(row[3]).trim();
       var orderModel = String(row[6]).trim();
-      var actualCompleteDate = String(row[actualCompleteDateColIndex]).trim();
-      
-      if (jobOrder !== "" && actualCompleteDate === "") {
-        activeJobs.push({ job: jobOrder, model: orderModel });
+
+      if (jobOrder === "") return;
+
+      if (actualCompleteDateColIndex >= 0) {
+        var actualCompleteDate = String(row[actualCompleteDateColIndex]).trim();
+        if (actualCompleteDate !== "") return;
       }
+
+      activeJobs.push({ job: jobOrder, model: orderModel });
     });
     
     return activeJobs;
