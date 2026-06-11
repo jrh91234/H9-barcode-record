@@ -255,7 +255,7 @@
       </div>
     </div>
     
-    <div class="version-tag">v17.7 (Center Status Light)</div>
+    <div class="version-tag">v17.9 (Actual Complete Date Filter)</div>
 
     <script>
       var delayTime = 3000;     
@@ -691,7 +691,7 @@
 
               if (jobs.length === 0 || (jobs.length === 1 && jobs[0].error)) {
                   var option = document.createElement("option");
-                  option.text = "No Active Jobs Found";
+                  option.text = "No Incomplete Jobs Found";
                   selectBox.add(option);
               } else {
                   var defaultOption = document.createElement("option");
@@ -726,7 +726,7 @@
       function saveJobOrder() {
           var val = document.getElementById('job-input').value.trim();
           
-          if(val && val !== "No Active Jobs Found") {
+          if(val && val !== "No Incomplete Jobs Found") {
               var selectedModel = jobDataMap[val];
 
               if (currentModel && selectedModel && selectedModel !== currentModel) {
