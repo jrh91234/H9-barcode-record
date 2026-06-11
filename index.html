@@ -255,7 +255,7 @@
       </div>
     </div>
     
-    <div class="version-tag">v17.7 (Center Status Light)</div>
+    <div class="version-tag">v17.10 (Local Preview Guard)</div>
 
     <script>
       var delayTime = 3000;     
@@ -287,9 +287,26 @@
       const urlParams = new URLSearchParams(window.location.search);
       const isDashboardMode = urlParams.get('mode') === 'dashboard';
 
+      function isGoogleScriptReady() {
+          return typeof google !== "undefined" && google.script && google.script.run;
+      }
+
+      function markLocalPreviewMode() {
+          var dbStatus = document.getElementById('db-status');
+          var syncStatus = document.getElementById('sync-status');
+          if (dbStatus) {
+              dbStatus.innerText = "Local Preview";
+              dbStatus.style.color = "#FF6F00";
+          }
+          if (syncStatus) {
+              syncStatus.innerText = "Local Preview — Apps Script unavailable";
+              syncStatus.style.color = "#FF6F00";
+          }
+      }
+
       if(localStorage.getItem('current_job')) currentJob = localStorage.getItem('current_job');
       
-      if(!isDashboardMode && currentJob !== "N/A" && currentJob !== "MANUAL_MODE") {
+      if(isGoogleScriptReady() && !isDashboardMode && currentJob !== "N/A" && currentJob !== "MANUAL_MODE") {
           google.script.run.withSuccessHandler(function(jobs) {
              jobs.forEach(j => { jobDataMap[j.job] = j.model; });
           }).getActiveJobOrders();
@@ -323,23 +340,28 @@
         
         setInterval(syncConfig, configInterval);
 
-        google.script.run.withSuccessHandler(function(m) {
-           currentModel = m;
-           if(currentModel) {
-              document.getElementById('current-model-display').innerText = currentModel;
-              if(!isDashboardMode) restoreHistory();
-           }
-        }).getServerModel();
+        if (isGoogleScriptReady()) {
+            google.script.run.withSuccessHandler(function(m) {
+               currentModel = m;
+               if(currentModel) {
+                  document.getElementById('current-model-display').innerText = currentModel;
+                  if(!isDashboardMode) restoreHistory();
+               }
+            }).getServerModel();
 
-        google.script.run.withSuccessHandler(function(data) {
-           if(data && data.length > 0) {
-             data.forEach(function(row) { localDB[String(row[1]).trim()] = row[0]; });
-             document.getElementById('db-status').innerText = "OK (" + data.length + ")";
-             document.getElementById('db-status').style.color = "green";
-           } else {
-             document.getElementById('db-status').innerText = "No Data";
-           }
-        }).getOfflineDatabase();
+            google.script.run.withSuccessHandler(function(data) {
+               if(data && data.length > 0) {
+                 data.forEach(function(row) { localDB[String(row[1]).trim()] = row[0]; });
+                 document.getElementById('db-status').innerText = "OK (" + data.length + ")";
+                 document.getElementById('db-status').style.color = "green";
+               } else {
+                 document.getElementById('db-status').innerText = "No Data";
+               }
+            }).getOfflineDatabase();
+        } else {
+            markLocalPreviewMode();
+            if(!isDashboardMode) restoreHistory();
+        }
         
         syncConfig();
         if(!isDashboardMode) refocusTrap();
@@ -374,6 +396,11 @@
       }
 
       function fetchCloudData() {
+          if (!isGoogleScriptReady()) {
+              markLocalPreviewMode();
+              updateUI();
+              return;
+          }
           google.script.run.withSuccessHandler(function(jsonStr) {
               var cloudData = JSON.parse(jsonStr);
               var tempHistory = {};
@@ -395,6 +422,12 @@
       }
 
       function syncConfig() {
+          if (!isGoogleScriptReady()) {
+              capDB = {};
+              markLocalPreviewMode();
+              updateUI();
+              return;
+          }
           google.script.run.withSuccessHandler(function(caps) {
               capDB = caps || {};
               updateUI();
@@ -685,13 +718,24 @@
           selectBox.innerHTML = '<option value="">Loading...</option>';
           document.getElementById('jobModal').style.display = 'flex';
           
+          if (!isGoogleScriptReady()) {
+              selectBox.innerHTML = "";
+              jobDataMap = {};
+              var option = document.createElement("option");
+              option.text = "Apps Script unavailable in local preview";
+              option.value = "";
+              selectBox.add(option);
+              markLocalPreviewMode();
+              return;
+          }
+
           google.script.run.withSuccessHandler(function(jobs) {
               selectBox.innerHTML = "";
               jobDataMap = {}; 
 
               if (jobs.length === 0 || (jobs.length === 1 && jobs[0].error)) {
                   var option = document.createElement("option");
-                  option.text = "No Active Jobs Found";
+                  option.text = "No Incomplete Jobs Found";
                   selectBox.add(option);
               } else {
                   var defaultOption = document.createElement("option");
@@ -726,7 +770,7 @@
       function saveJobOrder() {
           var val = document.getElementById('job-input').value.trim();
           
-          if(val && val !== "No Active Jobs Found") {
+          if(val && val !== "No Incomplete Jobs Found") {
               var selectedModel = jobDataMap[val];
 
               if (currentModel && selectedModel && selectedModel !== currentModel) {
@@ -786,7 +830,12 @@
       var tempNewModel = "";
       function setCurrentModel(model) {
           currentModel = model; document.getElementById('current-model-display').innerText = currentModel;
-          google.script.run.setServerModel(currentModel); restoreHistory();
+          if (isGoogleScriptReady()) {
+              google.script.run.setServerModel(currentModel);
+          } else {
+              markLocalPreviewMode();
+          }
+          restoreHistory();
       }
       function confirmChangeModel() {
          var pass = document.getElementById('admin-pass').value;
@@ -796,6 +845,10 @@
 
       function syncData() {
          if (pendingQueue.length === 0) return; 
+         if (!isGoogleScriptReady()) {
+            markLocalPreviewMode();
+            return;
+         }
          var batchToSend = pendingQueue.slice(); 
          document.getElementById('sync-status').innerText = "Syncing..."; 
          document.getElementById('sync-status').style.color = "#FFD700"; 
