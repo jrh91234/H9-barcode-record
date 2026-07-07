@@ -718,17 +718,18 @@
 
           var job = currentJob;
           var current = getJobScannedCount(job);
-          var removeCount = Math.min(n, current);
+          // ยอดในเครื่องลดได้แค่เท่าที่เครื่องนี้นับไว้ แต่ยอดใน Sheet ต้อง Void ตามจำนวนที่ขอเต็มๆ
+          // (ยอดจริงอาจถูกสแกนจากเครื่องอื่น หรือ counter ในเครื่องเพิ่งถูกรีเซ็ตข้ามวัน)
+          var localRemove = Math.min(n, current);
 
-          // ลดยอดในเครื่องนี้ทันที เพื่อคุมการบล็อกสแกนให้ตรงกับความเป็นจริง
-          jobScanHistory[job] = current - removeCount;
+          jobScanHistory[job] = current - localRemove;
           localStorage.setItem('job_scan_history', JSON.stringify(jobScanHistory));
           updateJobDisplay();
           document.getElementById('editJobCountModal').style.display = 'none';
 
           if (!isGoogleScriptReady()) {
               markLocalPreviewMode();
-              alert("ลดยอดในเครื่องนี้แล้ว " + removeCount + " รายการ (Local Preview: ไม่ได้แก้ข้อมูลใน Sheet)");
+              alert("ลดยอดในเครื่องนี้แล้ว " + localRemove + " รายการ (Local Preview: ไม่ได้แก้ข้อมูลใน Sheet)");
               refocusTrap();
               return;
           }
@@ -736,13 +737,19 @@
           document.getElementById('sync-status').innerText = "กำลังแก้ไขยอดใน Sheet...";
           google.script.run.withSuccessHandler(function(res) {
               document.getElementById('sync-status').innerText = "System Ready";
-              alert(res && res.success ? ("แก้ไขยอดสำเร็จ: Void " + res.voided + " รายการ") : ("แก้ไขยอดไม่สำเร็จ: " + (res ? res.message : "Unknown error")));
+              if (res && res.success) {
+                  alert(res.voided > 0
+                      ? ("แก้ไขยอดสำเร็จ: Void " + res.voided + " รายการใน Sheet")
+                      : "ไม่พบรายการของ Job นี้ใน Sheet ที่ยังไม่ถูก Void");
+              } else {
+                  alert("แก้ไขยอดไม่สำเร็จ: " + (res ? res.message : "Unknown error"));
+              }
               refocusTrap();
           }).withFailureHandler(function(err) {
               document.getElementById('sync-status').innerText = "System Ready";
               alert("แก้ไขยอดใน Sheet ไม่สำเร็จ: " + err.message + "\n(ยอดในเครื่องนี้ถูกลดแล้ว แต่ Sheet อาจไม่ตรงกัน)");
               refocusTrap();
-          }).voidLastJobScans(job, removeCount, pass);
+          }).voidLastJobScans(job, n, pass);
       }
 
       function saveToHistory(model) {
