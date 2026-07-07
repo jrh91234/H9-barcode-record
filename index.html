@@ -170,6 +170,10 @@
            <div class="model-label">CURRENT MODEL</div>
            <div class="model-name" id="current-model-display">Scan to start</div>
         </div>
+        <div class="model-group" style="margin-left: 20px;" onclick="openStationModal()">
+           <div class="model-label">STATION ✎</div>
+           <div class="job-name" id="current-station-display" style="color:#d32f2f;">⚠ ยังไม่ตั้งค่า</div>
+        </div>
       </div>
       <div style="text-align:right; display:flex; align-items:center; gap:15px;">
         <button id="test-mode-btn" onclick="toggleTestMode()" title="Test Mode — ทดลองสแกนโดยไม่บันทึกลง Sheet">TEST MODE</button>
@@ -241,6 +245,20 @@
       </div>
     </div>
 
+    <div class="modal-overlay" id="stationModal">
+      <div class="modal-box">
+        <h3>ตั้งค่าเครื่องสแกน (Station ID)</h3>
+        <div style="font-size:13px; color:#666; margin-bottom:5px;">ระบุชื่อ/รหัสเครื่องนี้ เพื่อใช้แยกแยะแหล่งที่มาของข้อมูลใน Log</div>
+        <input type="text" id="station-input" class="modal-input" placeholder="เช่น Line1-Scanner01" maxlength="30">
+        <div id="station-admin-section" style="display:none;">
+            <input type="password" id="station-admin-pass" class="modal-input" placeholder="Password (Admin)" style="width:50%;">
+        </div>
+        <br>
+        <button class="btn btn-primary" onclick="saveStationId()">Save</button>
+        <button class="btn" id="station-cancel-btn" onclick="closeStationModal()">Cancel</button>
+      </div>
+    </div>
+
     <div class="modal-overlay" id="jobChangeBigModal">
       <div class="modal-box" style="width: 600px; padding: 40px; border: 4px solid #E65100;"> 
         <h2 style="color: #E65100; font-size: 32px; margin-bottom: 20px;">⚠️ ยืนยันเปลี่ยน Model</h2>
@@ -255,7 +273,7 @@
       </div>
     </div>
     
-    <div class="version-tag">v17.10 (Local Preview Guard)</div>
+    <div class="version-tag">v17.11 (Station Tracking)</div>
 
     <script>
       var delayTime = 3000;     
@@ -283,6 +301,7 @@
       var pendingModelVal = "";
       var isTestMode = false;
       var preTestHistory = null; // snapshot ข้อมูลจริงก่อนเข้า Test Mode
+      var currentStation = localStorage.getItem('station_id') || "";
 
       const urlParams = new URLSearchParams(window.location.search);
       const isDashboardMode = urlParams.get('mode') === 'dashboard';
@@ -334,10 +353,15 @@
         }
 
         updateJobDisplay();
+        updateStationDisplay();
         updateClock(); setInterval(updateClock, 1000);
-        
+
         if(!isDashboardMode) {
             setInterval(syncData, syncInterval);
+        }
+
+        if(!isDashboardMode && !currentStation) {
+            openStationModal();
         }
         
         setInterval(syncConfig, configInterval);
@@ -463,7 +487,8 @@
           var modal1 = document.getElementById('changeModelModal').style.display === 'flex';
           var modal2 = document.getElementById('jobModal').style.display === 'flex';
           var modal3 = document.getElementById('jobChangeBigModal').style.display === 'flex';
-          if (!modal1 && !modal2 && !modal3) document.getElementById('scan-trap').focus();
+          var modal4 = document.getElementById('stationModal').style.display === 'flex';
+          if (!modal1 && !modal2 && !modal3 && !modal4) document.getElementById('scan-trap').focus();
       }
       setInterval(refocusTrap, 1000);
 
@@ -479,12 +504,20 @@
           if (e.key === 'Enter') { executeJobChange(); }
       });
 
+      document.getElementById('station-input').addEventListener('keydown', function(e) {
+          if (e.key === 'Enter') { e.preventDefault(); saveStationId(); }
+      });
+      document.getElementById('station-admin-pass').addEventListener('keydown', function(e) {
+          if (e.key === 'Enter') { e.preventDefault(); saveStationId(); }
+      });
+
       function handleScannerInput(e) {
           if(isDashboardMode) return;
           if (document.getElementById('changeModelModal').style.display === 'flex') return;
           if (document.getElementById('jobModal').style.display === 'flex') return;
           if (document.getElementById('jobChangeBigModal').style.display === 'flex') return;
-          
+          if (document.getElementById('stationModal').style.display === 'flex') return;
+
           if (e.key === 'Tab' || e.key === 'Enter') { e.preventDefault(); }
           var char = thaiMap[e.key] || e.key;
           if (char.length === 1) {
@@ -557,7 +590,7 @@
           saveToHistory(currentModel);
           if (!isTestMode) {
             var dateStr = new Date().toLocaleString('th-TH');
-            var record = [dateStr, currentJob, currentModel, barcode, "OK"];
+            var record = [dateStr, currentJob, currentModel, barcode, "OK", currentStation || "Unknown"];
             pendingQueue.push(record);
           }
           updateSyncStatus();
@@ -780,6 +813,57 @@
       }
       
       function closeJobModal() { document.getElementById('jobModal').style.display = 'none'; refocusTrap(); }
+
+      function updateStationDisplay() {
+          var el = document.getElementById('current-station-display');
+          if (!el) return;
+          if (isDashboardMode) {
+              el.innerText = "N/A";
+              el.style.color = "#777";
+              return;
+          }
+          el.innerText = currentStation || "⚠ ยังไม่ตั้งค่า";
+          el.style.color = currentStation ? "#1565C0" : "#d32f2f";
+      }
+
+      function openStationModal() {
+          if(isDashboardMode) return;
+          document.getElementById('station-input').value = currentStation;
+          document.getElementById('station-admin-pass').value = "";
+          var adminSection = document.getElementById('station-admin-section');
+          var cancelBtn = document.getElementById('station-cancel-btn');
+          if (currentStation) {
+              adminSection.style.display = 'block';
+              cancelBtn.style.display = 'inline-block';
+          } else {
+              adminSection.style.display = 'none';
+              cancelBtn.style.display = 'none'; // ต้องตั้งค่าก่อนใช้งาน ครั้งแรกยกเลิกไม่ได้
+          }
+          document.getElementById('stationModal').style.display = 'flex';
+          document.getElementById('station-input').focus();
+      }
+
+      function closeStationModal() {
+          if (!currentStation) return; // บังคับตั้งค่าก่อนใช้งานครั้งแรก
+          document.getElementById('stationModal').style.display = 'none';
+          refocusTrap();
+      }
+
+      function saveStationId() {
+          var val = document.getElementById('station-input').value.trim();
+          if (!val) { alert("กรุณาระบุชื่อ/รหัสเครื่อง (Station ID)"); return; }
+
+          if (currentStation && val !== currentStation) {
+              var pass = document.getElementById('station-admin-pass').value;
+              if (pass !== "1234") { alert("❌ รหัสผ่านไม่ถูกต้อง!"); return; }
+          }
+
+          currentStation = val;
+          localStorage.setItem('station_id', currentStation);
+          updateStationDisplay();
+          document.getElementById('stationModal').style.display = 'none';
+          refocusTrap();
+      }
       
       function saveJobOrder() {
           var val = document.getElementById('job-input').value.trim();
