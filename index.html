@@ -356,6 +356,7 @@
       }
 
       if(localStorage.getItem('current_job')) currentJob = localStorage.getItem('current_job');
+      if(localStorage.getItem('current_model')) currentModel = localStorage.getItem('current_model');
       
       if(isGoogleScriptReady() && !isDashboardMode && currentJob !== "N/A" && currentJob !== "MANUAL_MODE") {
           google.script.run.withSuccessHandler(function(jobs) {
@@ -400,10 +401,16 @@
         
         setInterval(syncConfig, configInterval);
 
+        if(currentModel) document.getElementById('current-model-display').innerText = currentModel;
+        if(!isDashboardMode) restoreHistory();
+
         if (isGoogleScriptReady()) {
+            // CURRENT_MODEL บน Server เป็นค่ากลาง ใช้เป็นค่าเริ่มต้นเฉพาะเครื่องที่ยังไม่เคยตั้ง Model เอง
+            // (ห้ามใช้ overwrite ทับค่าที่เครื่องนี้ตั้งไว้แล้ว เพราะแต่ละ Line อาจรันคนละ Model พร้อมกัน)
             google.script.run.withSuccessHandler(function(m) {
-               currentModel = m;
-               if(currentModel) {
+               if (!currentModel && m) {
+                  currentModel = m;
+                  localStorage.setItem('current_model', currentModel);
                   document.getElementById('current-model-display').innerText = currentModel;
                   if(!isDashboardMode) restoreHistory();
                }
@@ -420,9 +427,8 @@
             }).getOfflineDatabase();
         } else {
             markLocalPreviewMode();
-            if(!isDashboardMode) restoreHistory();
         }
-        
+
         syncConfig();
         if(!isDashboardMode) refocusTrap();
         requestAnimationFrame(updateFireworks);
@@ -1072,6 +1078,7 @@
       var tempNewModel = "";
       function setCurrentModel(model) {
           currentModel = model; document.getElementById('current-model-display').innerText = currentModel;
+          localStorage.setItem('current_model', currentModel);
           if (isGoogleScriptReady()) {
               google.script.run.setServerModel(currentModel);
           } else {
