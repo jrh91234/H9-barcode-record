@@ -249,7 +249,7 @@
       <div class="modal-box">
         <h3>ตั้งค่าเครื่องสแกน (Station ID)</h3>
         <div style="font-size:13px; color:#666; margin-bottom:5px;">ระบุชื่อ/รหัสเครื่องนี้ เพื่อใช้แยกแยะแหล่งที่มาของข้อมูลใน Log</div>
-        <input type="text" id="station-input" class="modal-input" placeholder="เช่น Line1-Scanner01">
+        <input type="text" id="station-input" class="modal-input" placeholder="เช่น Line1-Scanner01" maxlength="30">
         <div id="station-admin-section" style="display:none;">
             <input type="password" id="station-admin-pass" class="modal-input" placeholder="Password (Admin)" style="width:50%;">
         </div>
@@ -590,7 +590,7 @@
           saveToHistory(currentModel);
           if (!isTestMode) {
             var dateStr = new Date().toLocaleString('th-TH');
-            var record = [dateStr, currentJob, currentModel, barcode, "OK", currentStation];
+            var record = [dateStr, currentJob, currentModel, barcode, "OK", currentStation || "Unknown"];
             pendingQueue.push(record);
           }
           updateSyncStatus();
@@ -817,6 +817,11 @@
       function updateStationDisplay() {
           var el = document.getElementById('current-station-display');
           if (!el) return;
+          if (isDashboardMode) {
+              el.innerText = "N/A";
+              el.style.color = "#777";
+              return;
+          }
           el.innerText = currentStation || "⚠ ยังไม่ตั้งค่า";
           el.style.color = currentStation ? "#1565C0" : "#d32f2f";
       }
