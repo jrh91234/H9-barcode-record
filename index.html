@@ -314,10 +314,12 @@
       var isTestMode = false;
       var preTestHistory = null; // snapshot ข้อมูลจริงก่อนเข้า Test Mode
       var preTestJobScanHistory = null;
+      var preTestJobOverrideSet = null;
       var currentStation = localStorage.getItem('station_id') || "";
       var jobScanHistory = JSON.parse(localStorage.getItem('job_scan_history')) || {};
       var jobOverrideSet = {}; // job codes allowed (this session) to exceed Plan qty
       var pendingOverrideJob = "";
+      const ADMIN_PASSWORD = "1234";
 
       const urlParams = new URLSearchParams(window.location.search);
       const isDashboardMode = urlParams.get('mode') === 'dashboard';
@@ -650,7 +652,7 @@
 
       function overrideJobComplete() {
           var pass = document.getElementById('job-complete-admin-pass').value;
-          if (pass !== "1234") { alert("❌ รหัสผ่านไม่ถูกต้อง!"); return; }
+          if (pass !== ADMIN_PASSWORD) { alert("❌ รหัสผ่านไม่ถูกต้อง!"); return; }
           jobOverrideSet[pendingOverrideJob] = true;
           document.getElementById('jobCompleteModal').style.display = 'none';
           refocusTrap();
@@ -1048,6 +1050,7 @@
             // บันทึก snapshot ข้อมูลจริงก่อนเข้า Test Mode
             preTestHistory = JSON.parse(JSON.stringify(productionHistory));
             preTestJobScanHistory = JSON.parse(JSON.stringify(jobScanHistory));
+            preTestJobOverrideSet = JSON.parse(JSON.stringify(jobOverrideSet));
             btn.classList.add('active');
             banner.style.display = 'block';
             document.body.classList.add('test-mode');
@@ -1071,6 +1074,10 @@
                preTestJobScanHistory = null;
                localStorage.setItem('job_scan_history', JSON.stringify(jobScanHistory));
                updateJobDisplay();
+            }
+            if (preTestJobOverrideSet !== null) {
+               jobOverrideSet = preTestJobOverrideSet;
+               preTestJobOverrideSet = null;
             }
          }
          refocusTrap();
