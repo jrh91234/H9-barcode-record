@@ -259,6 +259,18 @@
       </div>
     </div>
 
+    <div class="modal-overlay" id="jobCompleteModal">
+      <div class="modal-box">
+        <h2 style="color:#d32f2f;">⚠ Job Order ครบจำนวนแล้ว!</h2>
+        <div id="job-complete-msg" style="font-size:16px; margin:15px 0; text-align:left; background:#FFEBEE; padding:15px; border-radius:8px;"></div>
+        <div style="font-size:13px; color:#666; margin-bottom:10px;">กรอกรหัส Admin เพื่ออนุญาตให้สแกนเกินแผนต่อ</div>
+        <input type="password" id="job-complete-admin-pass" class="modal-input" placeholder="Password (Admin)">
+        <br>
+        <button class="btn btn-danger" onclick="overrideJobComplete()">Override & Continue</button>
+        <button class="btn" onclick="closeJobCompleteModal()">Close</button>
+      </div>
+    </div>
+
     <div class="modal-overlay" id="jobChangeBigModal">
       <div class="modal-box" style="width: 600px; padding: 40px; border: 4px solid #E65100;"> 
         <h2 style="color: #E65100; font-size: 32px; margin-bottom: 20px;">⚠️ ยืนยันเปลี่ยน Model</h2>
@@ -301,7 +313,11 @@
       var pendingModelVal = "";
       var isTestMode = false;
       var preTestHistory = null; // snapshot ข้อมูลจริงก่อนเข้า Test Mode
+      var preTestJobScanHistory = null;
       var currentStation = localStorage.getItem('station_id') || "";
+      var jobScanHistory = JSON.parse(localStorage.getItem('job_scan_history')) || {};
+      var jobOverrideSet = {}; // job codes allowed (this session) to exceed Plan qty
+      var pendingOverrideJob = "";
 
       const urlParams = new URLSearchParams(window.location.search);
       const isDashboardMode = urlParams.get('mode') === 'dashboard';
@@ -347,9 +363,11 @@
         var today = new Date().toDateString();
         var lastDate = localStorage.getItem('prod_date');
         if (lastDate !== today && !isDashboardMode) {
-            productionHistory = {}; 
+            productionHistory = {};
+            jobScanHistory = {};
             localStorage.setItem('prod_date', today);
             localStorage.setItem('prod_history', JSON.stringify(productionHistory));
+            localStorage.setItem('job_scan_history', JSON.stringify(jobScanHistory));
         }
 
         updateJobDisplay();
@@ -416,7 +434,7 @@
               el.innerText = "MANUAL (No Check)";
               el.style.color = "#FF9800";
           } else if (currentJob && currentJob !== "N/A" && jobDataMap[currentJob]) {
-              el.innerText = currentJob + " (Plan: " + jobDataMap[currentJob].qty + ")";
+              el.innerText = currentJob + " (Plan: " + jobDataMap[currentJob].qty + " | Scanned: " + getJobScannedCount(currentJob) + ")";
               el.style.color = "#E65100";
           } else {
               el.innerText = currentJob;
@@ -488,7 +506,8 @@
           var modal2 = document.getElementById('jobModal').style.display === 'flex';
           var modal3 = document.getElementById('jobChangeBigModal').style.display === 'flex';
           var modal4 = document.getElementById('stationModal').style.display === 'flex';
-          if (!modal1 && !modal2 && !modal3 && !modal4) document.getElementById('scan-trap').focus();
+          var modal5 = document.getElementById('jobCompleteModal').style.display === 'flex';
+          if (!modal1 && !modal2 && !modal3 && !modal4 && !modal5) document.getElementById('scan-trap').focus();
       }
       setInterval(refocusTrap, 1000);
 
@@ -510,6 +529,9 @@
       document.getElementById('station-admin-pass').addEventListener('keydown', function(e) {
           if (e.key === 'Enter') { e.preventDefault(); saveStationId(); }
       });
+      document.getElementById('job-complete-admin-pass').addEventListener('keydown', function(e) {
+          if (e.key === 'Enter') { e.preventDefault(); overrideJobComplete(); }
+      });
 
       function handleScannerInput(e) {
           if(isDashboardMode) return;
@@ -517,6 +539,7 @@
           if (document.getElementById('jobModal').style.display === 'flex') return;
           if (document.getElementById('jobChangeBigModal').style.display === 'flex') return;
           if (document.getElementById('stationModal').style.display === 'flex') return;
+          if (document.getElementById('jobCompleteModal').style.display === 'flex') return;
 
           if (e.key === 'Tab' || e.key === 'Enter') { e.preventDefault(); }
           var char = thaiMap[e.key] || e.key;
@@ -562,8 +585,23 @@
                    `Required: <b style='color:green'>${requiredModel}</b><br>` +
                    `Scanned: <b style='color:red'>${foundModel}</b>`;
                 
-                document.getElementById('admin-section').style.display = 'none'; 
+                document.getElementById('admin-section').style.display = 'none';
                 document.getElementById('changeModelModal').style.display = 'flex';
+                return;
+             }
+
+             var planQty = parseInt(jobDataMap[currentJob].qty) || 0;
+             if (planQty > 0 && !jobOverrideSet[currentJob] && getJobScannedCount(currentJob) >= planQty) {
+                try { playErrorSound(); } catch(e){}
+                updateStatusLight('NG');
+                document.getElementById('job-complete-msg').innerHTML =
+                   `Job: <b>${currentJob}</b><br>` +
+                   `Plan: <b>${planQty}</b><br>` +
+                   `สแกนแล้ว: <b style='color:red'>${getJobScannedCount(currentJob)}</b> (ครบจำนวนแล้ว)`;
+                pendingOverrideJob = currentJob;
+                document.getElementById('job-complete-admin-pass').value = "";
+                document.getElementById('jobCompleteModal').style.display = 'flex';
+                document.getElementById('job-complete-admin-pass').focus();
                 return;
              }
           }
@@ -588,6 +626,10 @@
           updateStatusLight('OK');
 
           saveToHistory(currentModel);
+          if (currentJob !== "MANUAL_MODE" && currentJob !== "N/A" && jobDataMap[currentJob]) {
+              incrementJobScanCount(currentJob);
+              updateJobDisplay();
+          }
           if (!isTestMode) {
             var dateStr = new Date().toLocaleString('th-TH');
             var record = [dateStr, currentJob, currentModel, barcode, "OK", currentStation || "Unknown"];
@@ -595,6 +637,28 @@
           }
           updateSyncStatus();
           updateUI();
+      }
+
+      function getJobScannedCount(job) {
+          return jobScanHistory[job] || 0;
+      }
+
+      function incrementJobScanCount(job) {
+          jobScanHistory[job] = (jobScanHistory[job] || 0) + 1;
+          localStorage.setItem('job_scan_history', JSON.stringify(jobScanHistory));
+      }
+
+      function overrideJobComplete() {
+          var pass = document.getElementById('job-complete-admin-pass').value;
+          if (pass !== "1234") { alert("❌ รหัสผ่านไม่ถูกต้อง!"); return; }
+          jobOverrideSet[pendingOverrideJob] = true;
+          document.getElementById('jobCompleteModal').style.display = 'none';
+          refocusTrap();
+      }
+
+      function closeJobCompleteModal() {
+          document.getElementById('jobCompleteModal').style.display = 'none';
+          refocusTrap();
       }
 
       function saveToHistory(model) {
@@ -983,6 +1047,7 @@
          if (isTestMode) {
             // บันทึก snapshot ข้อมูลจริงก่อนเข้า Test Mode
             preTestHistory = JSON.parse(JSON.stringify(productionHistory));
+            preTestJobScanHistory = JSON.parse(JSON.stringify(jobScanHistory));
             btn.classList.add('active');
             banner.style.display = 'block';
             document.body.classList.add('test-mode');
@@ -1000,6 +1065,12 @@
                preTestHistory = null;
                localStorage.setItem('prod_history', JSON.stringify(productionHistory));
                updateUI();
+            }
+            if (preTestJobScanHistory !== null) {
+               jobScanHistory = preTestJobScanHistory;
+               preTestJobScanHistory = null;
+               localStorage.setItem('job_scan_history', JSON.stringify(jobScanHistory));
+               updateJobDisplay();
             }
          }
          refocusTrap();
