@@ -171,7 +171,7 @@
            <div class="model-name" id="current-model-display">Scan to start</div>
         </div>
         <div class="model-group" style="margin-left: 20px;" onclick="openStationModal()">
-           <div class="model-label">STATION ✎</div>
+           <div class="model-label">LINE ✎</div>
            <div class="job-name" id="current-station-display" style="color:#d32f2f;">⚠ ยังไม่ตั้งค่า</div>
         </div>
       </div>
@@ -247,7 +247,7 @@
 
     <div class="modal-overlay" id="stationModal">
       <div class="modal-box">
-        <h3>ตั้งค่าเครื่องสแกน (Station ID)</h3>
+        <h3>ตั้งค่าเครื่องสแกน (Line)</h3>
         <div style="font-size:13px; color:#666; margin-bottom:5px;">ระบุชื่อ/รหัสเครื่องนี้ เพื่อใช้แยกแยะแหล่งที่มาของข้อมูลใน Log</div>
         <input type="text" id="station-input" class="modal-input" placeholder="เช่น Line1-Scanner01" maxlength="30">
         <div id="station-admin-section" style="display:none;">
@@ -851,7 +851,7 @@
 
       function saveStationId() {
           var val = document.getElementById('station-input').value.trim();
-          if (!val) { alert("กรุณาระบุชื่อ/รหัสเครื่อง (Station ID)"); return; }
+          if (!val) { alert("กรุณาระบุชื่อ/รหัสเครื่อง (Line)"); return; }
 
           if (currentStation && val !== currentStation) {
               var pass = document.getElementById('station-admin-pass').value;
