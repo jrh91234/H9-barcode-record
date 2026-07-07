@@ -220,9 +220,9 @@
     </div>
 
     <div class="modal-overlay" id="jobModal">
-      <div class="modal-box">
+      <div class="modal-box" style="width: 520px; max-width: 92vw;">
         <h3>Select Job Order</h3>
-        <select id="job-input" class="modal-input">
+        <select id="job-input" class="modal-input" style="width: 95%; font-size: 15px;">
            <option value="">Loading...</option>
         </select>
         <br>
@@ -785,7 +785,7 @@
 
                   jobs.forEach(function(j) {
                       var option = document.createElement("option");
-                      option.text = `${j.job} | ${j.model} | Plan: ${j.qty}`;
+                      option.text = `Plan: ${j.qty} | ${j.job} | ${j.model}`;
                       option.value = j.job;
                       jobDataMap[j.job] = { model: j.model, qty: j.qty };
 
