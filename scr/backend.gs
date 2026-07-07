@@ -133,6 +133,52 @@ function saveBatchData(jsonString) {
   }
 }
 
+// 4b. แก้ไขยอดเกิน: Void รายการสแกนล่าสุดของ Job Order ที่ระบุ (ไม่ลบแถวจริง เพื่อให้ตรวจสอบย้อนหลังได้)
+function voidLastJobScans(job, count, passwordInput) {
+  if (passwordInput !== ADMIN_PASSWORD) {
+    return { success: false, message: "Incorrect Password!" };
+  }
+  if (!job || !count || count <= 0) {
+    return { success: false, message: "Invalid job or count" };
+  }
+
+  try {
+    var ss = SpreadsheetApp.getActiveSpreadsheet();
+    var logSheet = ss.getSheetByName(LOG_SHEET_NAME);
+    if (!logSheet) return { success: false, message: "Sheet '" + LOG_SHEET_NAME + "' Not Found" };
+
+    var lock = LockService.getScriptLock();
+    if (!lock.tryLock(10000)) {
+      return { success: false, message: "Server Busy (Try again)" };
+    }
+
+    var lastRow = logSheet.getLastRow();
+    if (lastRow < 2) {
+      lock.releaseLock();
+      return { success: false, message: "No data" };
+    }
+
+    var data = logSheet.getRange(2, 1, lastRow - 1, 5).getValues(); // Timestamp, Job, Model, Barcode, Status
+    var voided = 0;
+
+    for (var i = data.length - 1; i >= 0 && voided < count; i--) {
+      var rowJob = String(data[i][1]).trim();
+      var rowStatus = String(data[i][4]).trim();
+      if (rowJob === String(job).trim() && rowStatus !== "VOID") {
+        var sheetRow = i + 2; // +2: header row + 1-indexed range
+        logSheet.getRange(sheetRow, 5).setValue("VOID");
+        voided++;
+      }
+    }
+
+    SpreadsheetApp.flush();
+    lock.releaseLock();
+    return { success: true, message: "Voided " + voided + " record(s) for job " + job, voided: voided };
+  } catch (e) {
+    return { success: false, message: "Error: " + e.message };
+  }
+}
+
 // ==========================================
 // MODEL STATE MANAGEMENT (ส่วนที่แก้ไขเพิ่ม)
 // ==========================================
@@ -167,7 +213,7 @@ function getTodayProductionData() {
   var lastRow = sheet.getLastRow();
   if (lastRow < 2) return JSON.stringify([]);
 
-  var data = sheet.getRange(2, 1, lastRow - 1, 3).getValues();
+  var data = sheet.getRange(2, 1, lastRow - 1, 5).getValues();
   var now = new Date();
   var todayDay   = now.getDate();
   var todayMonth = now.getMonth() + 1;
@@ -194,7 +240,7 @@ function getTodayProductionData() {
       rowHour  = (timePart ? timePart.split(":")[0] : "0").padStart(2, '0');
     }
 
-    if (rowDay === todayDay && rowMonth === todayMonth && rowYear === todayYear) {
+    if (rowDay === todayDay && rowMonth === todayMonth && rowYear === todayYear && String(data[i][4]).trim() !== "VOID") {
       todayData.push({ model: data[i][2], hour: rowHour });
     }
   }
