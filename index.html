@@ -166,6 +166,7 @@
            <div class="model-label">JOB ORDER ✎</div>
            <div class="job-name" id="current-job-display">N/A</div>
         </div>
+        <div onclick="event.stopPropagation(); openEditJobCountModal();" title="แก้ไขยอดสแกนเกิน (Admin)" style="cursor:pointer; font-size:18px; color:#d32f2f; margin-left:4px; align-self:flex-end; margin-bottom:6px;">🛠</div>
         <div class="model-group" style="margin-left: 20px;">
            <div class="model-label">CURRENT MODEL</div>
            <div class="model-name" id="current-model-display">Scan to start</div>
@@ -268,6 +269,19 @@
         <br>
         <button class="btn btn-danger" onclick="overrideJobComplete()">Override & Continue</button>
         <button class="btn" onclick="closeJobCompleteModal()">Close</button>
+      </div>
+    </div>
+
+    <div class="modal-overlay" id="editJobCountModal">
+      <div class="modal-box">
+        <h3 style="color:#d32f2f;">แก้ไขยอดสแกนเกิน (Admin)</h3>
+        <div id="edit-job-count-info" style="font-size:14px; color:#555; margin-bottom:10px; text-align:left; background:#f5f5f5; padding:10px; border-radius:8px;"></div>
+        <div style="font-size:13px; color:#666; margin-bottom:5px;">จำนวนที่ต้องการลบออก (นับจากรายการล่าสุดของ Job นี้)</div>
+        <input type="number" id="edit-job-count-input" class="modal-input" min="1" placeholder="เช่น 1">
+        <input type="password" id="edit-job-count-admin-pass" class="modal-input" placeholder="Password (Admin)">
+        <br>
+        <button class="btn btn-danger" onclick="confirmEditJobCount()">ลบยอดเกิน & ยืนยัน</button>
+        <button class="btn" onclick="closeEditJobCountModal()">Cancel</button>
       </div>
     </div>
 
@@ -509,7 +523,8 @@
           var modal3 = document.getElementById('jobChangeBigModal').style.display === 'flex';
           var modal4 = document.getElementById('stationModal').style.display === 'flex';
           var modal5 = document.getElementById('jobCompleteModal').style.display === 'flex';
-          if (!modal1 && !modal2 && !modal3 && !modal4 && !modal5) document.getElementById('scan-trap').focus();
+          var modal6 = document.getElementById('editJobCountModal').style.display === 'flex';
+          if (!modal1 && !modal2 && !modal3 && !modal4 && !modal5 && !modal6) document.getElementById('scan-trap').focus();
       }
       setInterval(refocusTrap, 1000);
 
@@ -534,6 +549,9 @@
       document.getElementById('job-complete-admin-pass').addEventListener('keydown', function(e) {
           if (e.key === 'Enter') { e.preventDefault(); overrideJobComplete(); }
       });
+      document.getElementById('edit-job-count-admin-pass').addEventListener('keydown', function(e) {
+          if (e.key === 'Enter') { e.preventDefault(); confirmEditJobCount(); }
+      });
 
       function handleScannerInput(e) {
           if(isDashboardMode) return;
@@ -542,6 +560,7 @@
           if (document.getElementById('jobChangeBigModal').style.display === 'flex') return;
           if (document.getElementById('stationModal').style.display === 'flex') return;
           if (document.getElementById('jobCompleteModal').style.display === 'flex') return;
+          if (document.getElementById('editJobCountModal').style.display === 'flex') return;
 
           if (e.key === 'Tab' || e.key === 'Enter') { e.preventDefault(); }
           var char = thaiMap[e.key] || e.key;
@@ -661,6 +680,63 @@
       function closeJobCompleteModal() {
           document.getElementById('jobCompleteModal').style.display = 'none';
           refocusTrap();
+      }
+
+      function openEditJobCountModal() {
+          if (isDashboardMode) return;
+          if (currentJob === "MANUAL_MODE" || currentJob === "N/A" || !jobDataMap[currentJob]) {
+              alert("ฟีเจอร์นี้ใช้ได้เฉพาะตอนเลือก Job Order ที่มีแผนจำนวนแล้วเท่านั้น");
+              return;
+          }
+          var planQty = parseInt(jobDataMap[currentJob].qty) || 0;
+          var scanned = getJobScannedCount(currentJob);
+          document.getElementById('edit-job-count-info').innerHTML =
+              `Job: <b>${currentJob}</b><br>Plan: <b>${planQty}</b><br>สแกนแล้ว (เครื่องนี้): <b>${scanned}</b>`;
+          document.getElementById('edit-job-count-input').value = "";
+          document.getElementById('edit-job-count-admin-pass').value = "";
+          document.getElementById('editJobCountModal').style.display = 'flex';
+          document.getElementById('edit-job-count-input').focus();
+      }
+
+      function closeEditJobCountModal() {
+          document.getElementById('editJobCountModal').style.display = 'none';
+          refocusTrap();
+      }
+
+      function confirmEditJobCount() {
+          var pass = document.getElementById('edit-job-count-admin-pass').value;
+          if (pass !== ADMIN_PASSWORD) { alert("❌ รหัสผ่านไม่ถูกต้อง!"); return; }
+
+          var n = parseInt(document.getElementById('edit-job-count-input').value);
+          if (!n || n <= 0) { alert("กรุณาระบุจำนวนที่ต้องการลบออก (มากกว่า 0)"); return; }
+
+          var job = currentJob;
+          var current = getJobScannedCount(job);
+          var removeCount = Math.min(n, current);
+
+          // ลดยอดในเครื่องนี้ทันที เพื่อคุมการบล็อกสแกนให้ตรงกับความเป็นจริง
+          jobScanHistory[job] = current - removeCount;
+          localStorage.setItem('job_scan_history', JSON.stringify(jobScanHistory));
+          updateJobDisplay();
+          document.getElementById('editJobCountModal').style.display = 'none';
+
+          if (!isGoogleScriptReady()) {
+              markLocalPreviewMode();
+              alert("ลดยอดในเครื่องนี้แล้ว " + removeCount + " รายการ (Local Preview: ไม่ได้แก้ข้อมูลใน Sheet)");
+              refocusTrap();
+              return;
+          }
+
+          document.getElementById('sync-status').innerText = "กำลังแก้ไขยอดใน Sheet...";
+          google.script.run.withSuccessHandler(function(res) {
+              document.getElementById('sync-status').innerText = "System Ready";
+              alert(res && res.success ? ("แก้ไขยอดสำเร็จ: Void " + res.voided + " รายการ") : ("แก้ไขยอดไม่สำเร็จ: " + (res ? res.message : "Unknown error")));
+              refocusTrap();
+          }).withFailureHandler(function(err) {
+              document.getElementById('sync-status').innerText = "System Ready";
+              alert("แก้ไขยอดใน Sheet ไม่สำเร็จ: " + err.message + "\n(ยอดในเครื่องนี้ถูกลดแล้ว แต่ Sheet อาจไม่ตรงกัน)");
+              refocusTrap();
+          }).voidLastJobScans(job, removeCount, pass);
       }
 
       function saveToHistory(model) {
