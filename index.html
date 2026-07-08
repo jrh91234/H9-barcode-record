@@ -1120,9 +1120,10 @@
          document.getElementById('sync-status').style.color = "#FFD700";
          google.script.run.withSuccessHandler(function(res) {
              isSyncing = false;
-             if (typeof res === "string" && res.indexOf("Error") === 0) {
-                 // Server ไม่ได้บันทึก (เช่น Server Busy) — คงคิวไว้รอส่งรอบถัดไป
-                 document.getElementById('sync-status').innerText = res;
+             // เคลียร์คิวเฉพาะเมื่อ server ยืนยันว่าบันทึกแล้ว ("Saved N") เท่านั้น
+             // response อื่น (Error, Server Busy, ข้อความไม่รู้จัก) คงคิวไว้รอส่งรอบถัดไป
+             if (typeof res !== "string" || res.indexOf("Saved") !== 0) {
+                 document.getElementById('sync-status').innerText = String(res);
                  document.getElementById('sync-status').style.color = "red";
                  return;
              }
@@ -1132,7 +1133,8 @@
              updateSyncStatus();
          }).withFailureHandler(function(err){
              isSyncing = false;
-             document.getElementById('sync-status').innerText = "Err: " + err.message;
+             var errMsg = (err && err.message) ? err.message : (err || "Unknown error");
+             document.getElementById('sync-status').innerText = "Err: " + errMsg;
              document.getElementById('sync-status').style.color = "red";
          }).saveBatchData(JSON.stringify(batchToSend));
       }
