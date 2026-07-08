@@ -19,6 +19,44 @@ function doGet() {
 }
 
 // ==========================================
+// SPREADSHEET UI (เมนู + ไฮไลต์ข้อมูลซ้ำ)
+// ==========================================
+
+// เพิ่มเมนูตอนเปิดชีต และตั้งค่าไฮไลต์ข้อมูลซ้ำให้อัตโนมัติ
+function onOpen() {
+  SpreadsheetApp.getUi()
+      .createMenu('Barcode Tools')
+      .addItem('ไฮไลต์รายการซ้ำ (Column A)', 'setupDuplicateHighlighting')
+      .addToUi();
+  setupDuplicateHighlighting();
+}
+
+// ไฮไลต์ Column A (Date/Time) เมื่อแถวนั้นเป็นรายการซ้ำเป๊ะ
+// (Date/Time + Job Order + Barcode ตรงกันทุกช่อง = ร่องรอยบั๊คบันทึกซ้ำ ไม่ใช่แค่สแกนโมเดลเดียวกันคนละเวลา)
+function setupDuplicateHighlighting() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getSheetByName(LOG_SHEET_NAME);
+  if (!sheet) return;
+
+  // เก็บกฎเดิมทั้งหมดไว้ ยกเว้นกฎไฮไลต์ซ้ำที่เคยตั้งจาก column A (กันไม่ให้ซ้อนกันทุกครั้งที่เปิดไฟล์)
+  var existingRules = sheet.getConditionalFormatRules().filter(function(rule) {
+    return !rule.getRanges().some(function(range) { return range.getColumn() === 1; });
+  });
+
+  var lastRow = Math.max(sheet.getMaxRows(), 2);
+  var columnARange = sheet.getRange(2, 1, lastRow - 1, 1);
+
+  var duplicateRule = SpreadsheetApp.newConditionalFormatRule()
+      .whenFormulaSatisfied('=COUNTIFS($A$2:$A,$A2,$B$2:$B,$B2,$D$2:$D,$D2)>1')
+      .setBackground('#F4C7C3')
+      .setRanges([columnARange])
+      .build();
+
+  existingRules.push(duplicateRule);
+  sheet.setConditionalFormatRules(existingRules);
+}
+
+// ==========================================
 // CORE FUNCTIONS
 // ==========================================
 
