@@ -1106,22 +1106,35 @@
       }
       function closeModal() { document.getElementById('changeModelModal').style.display = 'none'; document.getElementById('admin-pass').value = ""; refocusTrap(); }
 
+      var isSyncing = false;
       function syncData() {
-         if (pendingQueue.length === 0) return; 
+         if (isSyncing) return; // มี batch ค้างส่งอยู่ ห้ามส่งคิวชุดเดิมซ้ำ
+         if (pendingQueue.length === 0) return;
          if (!isGoogleScriptReady()) {
             markLocalPreviewMode();
             return;
          }
-         var batchToSend = pendingQueue.slice(); 
-         document.getElementById('sync-status').innerText = "Syncing..."; 
-         document.getElementById('sync-status').style.color = "#FFD700"; 
+         var batchToSend = pendingQueue.slice();
+         isSyncing = true;
+         document.getElementById('sync-status').innerText = "Syncing...";
+         document.getElementById('sync-status').style.color = "#FFD700";
          google.script.run.withSuccessHandler(function(res) {
-             pendingQueue.splice(0, batchToSend.length); 
+             isSyncing = false;
+             // เคลียร์คิวเฉพาะเมื่อ server ยืนยันว่าบันทึกแล้ว ("Saved N") เท่านั้น
+             // response อื่น (Error, Server Busy, ข้อความไม่รู้จัก) คงคิวไว้รอส่งรอบถัดไป
+             if (typeof res !== "string" || res.indexOf("Saved") !== 0) {
+                 document.getElementById('sync-status').innerText = String(res);
+                 document.getElementById('sync-status').style.color = "red";
+                 return;
+             }
+             pendingQueue.splice(0, batchToSend.length);
              document.getElementById('sync-status').innerText = "Synced";
-             document.getElementById('sync-status').style.color = "#00e676"; 
+             document.getElementById('sync-status').style.color = "#00e676";
              updateSyncStatus();
          }).withFailureHandler(function(err){
-             document.getElementById('sync-status').innerText = "Err: " + err.message;
+             isSyncing = false;
+             var errMsg = (err && err.message) ? err.message : (err || "Unknown error");
+             document.getElementById('sync-status').innerText = "Err: " + errMsg;
              document.getElementById('sync-status').style.color = "red";
          }).saveBatchData(JSON.stringify(batchToSend));
       }
