@@ -1106,21 +1106,32 @@
       }
       function closeModal() { document.getElementById('changeModelModal').style.display = 'none'; document.getElementById('admin-pass').value = ""; refocusTrap(); }
 
+      var isSyncing = false;
       function syncData() {
-         if (pendingQueue.length === 0) return; 
+         if (isSyncing) return; // มี batch ค้างส่งอยู่ ห้ามส่งคิวชุดเดิมซ้ำ
+         if (pendingQueue.length === 0) return;
          if (!isGoogleScriptReady()) {
             markLocalPreviewMode();
             return;
          }
-         var batchToSend = pendingQueue.slice(); 
-         document.getElementById('sync-status').innerText = "Syncing..."; 
-         document.getElementById('sync-status').style.color = "#FFD700"; 
+         var batchToSend = pendingQueue.slice();
+         isSyncing = true;
+         document.getElementById('sync-status').innerText = "Syncing...";
+         document.getElementById('sync-status').style.color = "#FFD700";
          google.script.run.withSuccessHandler(function(res) {
-             pendingQueue.splice(0, batchToSend.length); 
+             isSyncing = false;
+             if (typeof res === "string" && res.indexOf("Error") === 0) {
+                 // Server ไม่ได้บันทึก (เช่น Server Busy) — คงคิวไว้รอส่งรอบถัดไป
+                 document.getElementById('sync-status').innerText = res;
+                 document.getElementById('sync-status').style.color = "red";
+                 return;
+             }
+             pendingQueue.splice(0, batchToSend.length);
              document.getElementById('sync-status').innerText = "Synced";
-             document.getElementById('sync-status').style.color = "#00e676"; 
+             document.getElementById('sync-status').style.color = "#00e676";
              updateSyncStatus();
          }).withFailureHandler(function(err){
+             isSyncing = false;
              document.getElementById('sync-status').innerText = "Err: " + err.message;
              document.getElementById('sync-status').style.color = "red";
          }).saveBatchData(JSON.stringify(batchToSend));
