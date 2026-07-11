@@ -412,6 +412,7 @@
 
         if(currentModel) document.getElementById('current-model-display').innerText = currentModel;
         if(!isDashboardMode) restoreHistory();
+        hydrateFromSheet(); // สร้างยอดหน้าจอใหม่จาก Sheet เผื่อ localStorage เพิ่งถูกล้าง
 
         if (isGoogleScriptReady()) {
             // CURRENT_MODEL บน Server เป็นค่ากลาง ใช้เป็นค่าเริ่มต้นเฉพาะเครื่องที่ยังไม่เคยตั้ง Model เอง
@@ -785,7 +786,50 @@
          localStorage.setItem('prod_history', JSON.stringify(productionHistory));
       }
 
-      function restoreHistory() { 
+      // กู้ยอดของ Line นี้กลับมาจาก Log sheet (ข้อมูลจริง) — ใช้ตอนโหลดหน้า
+      // เพราะ localStorage ของ Apps Script web app หายได้เมื่อ deploy ใหม่/origin เปลี่ยน
+      function hydrateFromSheet() {
+          if (isDashboardMode || !isGoogleScriptReady() || !currentStation) return;
+          google.script.run.withSuccessHandler(function(jsonStr) {
+              if (isTestMode) return; // ห้ามทับ snapshot ระหว่างทดลองสแกน
+              try {
+                  var rows = JSON.parse(jsonStr);
+                  var hist = {};
+                  var jobs = {};
+                  rows.forEach(function(r) {
+                      if (!hist[r.model]) hist[r.model] = { total: 0, hourly: {} };
+                      hist[r.model].total++;
+                      if (!hist[r.model].hourly[r.hour]) hist[r.model].hourly[r.hour] = 0;
+                      hist[r.model].hourly[r.hour]++;
+                      if (r.job && r.job !== "MANUAL_MODE" && r.job !== "N/A") {
+                          jobs[r.job] = (jobs[r.job] || 0) + 1;
+                      }
+                  });
+                  // สแกนที่เกิดระหว่างรอคำตอบยังไม่อยู่ใน Sheet (ค้างใน pendingQueue) — นับเพิ่มเข้าไปด้วย
+                  // โดยใช้ชั่วโมงจาก timestamp ของรายการนั้นจริงๆ ไม่ใช่ชั่วโมงปัจจุบัน
+                  pendingQueue.forEach(function(rec) {
+                      var m = rec[2], j = rec[1];
+                      var match = rec[0] ? String(rec[0]).match(/(\d+):(\d+):(\d+)/) : null;
+                      var h = match ? match[1].padStart(2, '0') : new Date().getHours().toString().padStart(2, '0');
+                      if (!hist[m]) hist[m] = { total: 0, hourly: {} };
+                      hist[m].total++;
+                      if (!hist[m].hourly[h]) hist[m].hourly[h] = 0;
+                      hist[m].hourly[h]++;
+                      if (j && j !== "MANUAL_MODE" && j !== "N/A") jobs[j] = (jobs[j] || 0) + 1;
+                  });
+                  productionHistory = hist;
+                  jobScanHistory = jobs;
+                  localStorage.setItem('prod_history', JSON.stringify(productionHistory));
+                  localStorage.setItem('job_scan_history', JSON.stringify(jobScanHistory));
+                  updateJobDisplay();
+                  updateUI();
+              } catch(e) { console.error("hydrateFromSheet error: " + e.message); }
+          }).withFailureHandler(function(err) {
+              console.error("hydrateFromSheet failed:", err); // ใช้ค่าจาก localStorage ต่อไปตามเดิม
+          }).getTodayStationData(currentStation);
+      }
+
+      function restoreHistory() {
           productionHistory = JSON.parse(localStorage.getItem('prod_history')) || {};
           updateUI(); updateSyncStatus(); 
       }
@@ -1035,11 +1079,15 @@
               if (pass !== "1234") { alert("❌ รหัสผ่านไม่ถูกต้อง!"); return; }
           }
 
+          var stationChanged = (val !== currentStation);
           currentStation = val;
           localStorage.setItem('station_id', currentStation);
           updateStationDisplay();
           document.getElementById('stationModal').style.display = 'none';
           refocusTrap();
+          // เพิ่งตั้ง/เปลี่ยนชื่อ Line: ดึงยอดวันนี้ของ Line นี้กลับมาจาก Sheet
+          // (ครอบคลุมเคส localStorage ถูกล้างแล้วผู้ใช้กรอกชื่อ Line เดิม — ยอดจะกลับมาเอง)
+          if (stationChanged) hydrateFromSheet();
       }
       
       function saveJobOrder() {

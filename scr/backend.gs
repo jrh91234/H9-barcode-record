@@ -203,22 +203,25 @@ function forceChangeModel(newModel, passwordInput) {
   }
 }
 
-// ดึงข้อมูลการผลิตวันนี้
-function getTodayProductionData() {
+// อ่านแถว Log ของวันนี้ (ไม่รวม VOID) — คืน [{job, model, hour, station}]
+function readTodayLogRows_() {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var sheet = ss.getSheetByName(LOG_SHEET_NAME);
 
-  if (!sheet) return JSON.stringify([]);
+  if (!sheet) return [];
 
   var lastRow = sheet.getLastRow();
-  if (lastRow < 2) return JSON.stringify([]);
+  if (lastRow < 2) return [];
 
-  var data = sheet.getRange(2, 1, lastRow - 1, 5).getValues();
+  // Log เก่าอาจมีคอลัมน์น้อยกว่า 6 — ห้ามขอ Range เกินขนาดจริงของ Sheet ไม่งั้น throw
+  var numCols = Math.min(sheet.getLastColumn(), 6);
+  if (numCols < 5) return []; // ไม่มีคอลัมน์ Status = ข้อมูลไม่อยู่ในรูปแบบที่ใช้ได้
+  var data = sheet.getRange(2, 1, lastRow - 1, numCols).getValues();
   var now = new Date();
   var todayDay   = now.getDate();
   var todayMonth = now.getMonth() + 1;
   var todayYear  = now.getFullYear() + 543; // ปี พ.ศ.
-  var todayData  = [];
+  var rows = [];
 
   for (var i = 0; i < data.length; i++) {
     var rowDay, rowMonth, rowYear, rowHour;
@@ -241,8 +244,36 @@ function getTodayProductionData() {
     }
 
     if (rowDay === todayDay && rowMonth === todayMonth && rowYear === todayYear && String(data[i][4]).trim() !== "VOID") {
-      todayData.push({ model: data[i][2], hour: rowHour });
+      rows.push({
+        job: String(data[i][1]).trim(),
+        model: data[i][2],
+        hour: rowHour,
+        station: numCols >= 6 ? String(data[i][5]).trim() : ""
+      });
     }
   }
+  return rows;
+}
+
+// ดึงข้อมูลการผลิตวันนี้ (ทุก Line — ใช้โดย Dashboard)
+function getTodayProductionData() {
+  var todayData = readTodayLogRows_().map(function(r) {
+    return { model: r.model, hour: r.hour };
+  });
+  return JSON.stringify(todayData);
+}
+
+// ดึงข้อมูลการผลิตวันนี้เฉพาะ Line ที่ระบุ — ใช้กู้ยอดหน้าจอหลังรีเฟรช
+// (localStorage ของ Apps Script web app หายได้เมื่อ deploy ใหม่/origin เปลี่ยน จึงต้องสร้างยอดใหม่จาก Sheet)
+function getTodayStationData(station) {
+  var target = String(station || "").trim();
+  if (!target) return JSON.stringify([]);
+
+  var todayData = [];
+  readTodayLogRows_().forEach(function(r) {
+    if (r.station === target) {
+      todayData.push({ model: r.model, hour: r.hour, job: r.job });
+    }
+  });
   return JSON.stringify(todayData);
 }
