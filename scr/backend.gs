@@ -213,7 +213,10 @@ function readTodayLogRows_() {
   var lastRow = sheet.getLastRow();
   if (lastRow < 2) return [];
 
-  var data = sheet.getRange(2, 1, lastRow - 1, 6).getValues();
+  // Log เก่าอาจมีคอลัมน์น้อยกว่า 6 — ห้ามขอ Range เกินขนาดจริงของ Sheet ไม่งั้น throw
+  var numCols = Math.min(sheet.getLastColumn(), 6);
+  if (numCols < 5) return []; // ไม่มีคอลัมน์ Status = ข้อมูลไม่อยู่ในรูปแบบที่ใช้ได้
+  var data = sheet.getRange(2, 1, lastRow - 1, numCols).getValues();
   var now = new Date();
   var todayDay   = now.getDate();
   var todayMonth = now.getMonth() + 1;
@@ -245,7 +248,7 @@ function readTodayLogRows_() {
         job: String(data[i][1]).trim(),
         model: data[i][2],
         hour: rowHour,
-        station: String(data[i][5]).trim()
+        station: numCols >= 6 ? String(data[i][5]).trim() : ""
       });
     }
   }

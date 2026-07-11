@@ -806,9 +806,11 @@
                       }
                   });
                   // สแกนที่เกิดระหว่างรอคำตอบยังไม่อยู่ใน Sheet (ค้างใน pendingQueue) — นับเพิ่มเข้าไปด้วย
-                  var h = new Date().getHours().toString().padStart(2, '0');
+                  // โดยใช้ชั่วโมงจาก timestamp ของรายการนั้นจริงๆ ไม่ใช่ชั่วโมงปัจจุบัน
                   pendingQueue.forEach(function(rec) {
                       var m = rec[2], j = rec[1];
+                      var match = rec[0] ? String(rec[0]).match(/(\d+):(\d+):(\d+)/) : null;
+                      var h = match ? match[1].padStart(2, '0') : new Date().getHours().toString().padStart(2, '0');
                       if (!hist[m]) hist[m] = { total: 0, hourly: {} };
                       hist[m].total++;
                       if (!hist[m].hourly[h]) hist[m].hourly[h] = 0;
