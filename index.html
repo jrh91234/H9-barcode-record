@@ -308,8 +308,17 @@
       var cloudPollInterval = 10000;
       
       var localDB = {};
-      var capDB = {};  
-      var jobDataMap = {}; 
+      var capDB = {};
+      var jobDataMap = {};
+
+      // จำนวนที่นับต่อการสแกน 1 ครั้ง แยกตามรุ่น (เช่น รุ่นที่แพ็ค 5 ชิ้น/ถุง)
+      // สแกน 1 ครั้ง = นับ N ชิ้น ทั้งยอดหน้าจอ ยอด Job และแถวที่บันทึกลง Sheet
+      var scanMultipliers = { "R9HME106": 5 };
+      function getScanMultiplier(model) {
+          // บังคับให้เป็นจำนวนเต็มบวก เพื่อกันค่า config ที่เป็น string/ทศนิยม
+          var m = Math.round(Number(scanMultipliers[model]));
+          return (m && m > 0) ? m : 1;
+      }
       
       var pendingQueue = [];    
       var currentModel = "";
@@ -652,15 +661,17 @@
           try { playSuccessSound(); } catch(e){}
           updateStatusLight('OK');
 
-          saveToHistory(currentModel);
+          var scanQty = getScanMultiplier(currentModel);
+          saveToHistory(currentModel, scanQty);
           if (currentJob !== "MANUAL_MODE" && currentJob !== "N/A" && jobDataMap[currentJob]) {
-              incrementJobScanCount(currentJob);
+              incrementJobScanCount(currentJob, scanQty);
               updateJobDisplay();
           }
           if (!isTestMode) {
             var dateStr = new Date().toLocaleString('th-TH');
-            var record = [dateStr, currentJob, currentModel, barcode, "OK", currentStation || "Unknown"];
-            pendingQueue.push(record);
+            for (var q = 0; q < scanQty; q++) {
+                pendingQueue.push([dateStr, currentJob, currentModel, barcode, "OK", currentStation || "Unknown"]);
+            }
           }
           updateSyncStatus();
           updateUI();
@@ -670,8 +681,10 @@
           return jobScanHistory[job] || 0;
       }
 
-      function incrementJobScanCount(job) {
-          jobScanHistory[job] = (jobScanHistory[job] || 0) + 1;
+      function incrementJobScanCount(job, qty) {
+          qty = Number(qty);
+          qty = (!isNaN(qty) && qty > 0) ? qty : 1;
+          jobScanHistory[job] = (jobScanHistory[job] || 0) + qty;
           localStorage.setItem('job_scan_history', JSON.stringify(jobScanHistory));
       }
 
@@ -759,14 +772,16 @@
           }).voidLastJobScans(job, n, pass);
       }
 
-      function saveToHistory(model) {
+      function saveToHistory(model, qty) {
          if(!model) return;
+         qty = Number(qty);
+         qty = (!isNaN(qty) && qty > 0) ? qty : 1;
          if(!productionHistory[model]) productionHistory[model] = { total: 0, hourly: {} };
          if(!productionHistory[model].hourly) productionHistory[model].hourly = {};
-         productionHistory[model].total = (productionHistory[model].total || 0) + 1;
+         productionHistory[model].total = (productionHistory[model].total || 0) + qty;
          var h = new Date().getHours().toString().padStart(2, '0');
          if(!productionHistory[model].hourly[h]) productionHistory[model].hourly[h] = 0;
-         productionHistory[model].hourly[h]++;
+         productionHistory[model].hourly[h] += qty;
          localStorage.setItem('prod_history', JSON.stringify(productionHistory));
       }
 
