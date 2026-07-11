@@ -315,7 +315,9 @@
       // สแกน 1 ครั้ง = นับ N ชิ้น ทั้งยอดหน้าจอ ยอด Job และแถวที่บันทึกลง Sheet
       var scanMultipliers = { "R9HME106": 5 };
       function getScanMultiplier(model) {
-          return scanMultipliers[model] || 1;
+          // บังคับให้เป็นจำนวนเต็มบวก เพื่อกันค่า config ที่เป็น string/ทศนิยม
+          var m = Math.round(Number(scanMultipliers[model]));
+          return (m && m > 0) ? m : 1;
       }
       
       var pendingQueue = [];    
@@ -680,7 +682,8 @@
       }
 
       function incrementJobScanCount(job, qty) {
-          qty = (qty && qty > 0) ? qty : 1;
+          qty = Number(qty);
+          qty = (!isNaN(qty) && qty > 0) ? qty : 1;
           jobScanHistory[job] = (jobScanHistory[job] || 0) + qty;
           localStorage.setItem('job_scan_history', JSON.stringify(jobScanHistory));
       }
@@ -771,7 +774,8 @@
 
       function saveToHistory(model, qty) {
          if(!model) return;
-         qty = (qty && qty > 0) ? qty : 1;
+         qty = Number(qty);
+         qty = (!isNaN(qty) && qty > 0) ? qty : 1;
          if(!productionHistory[model]) productionHistory[model] = { total: 0, hourly: {} };
          if(!productionHistory[model].hourly) productionHistory[model].hourly = {};
          productionHistory[model].total = (productionHistory[model].total || 0) + qty;
