@@ -299,13 +299,14 @@
       </div>
     </div>
     
-    <div class="version-tag">v17.11 (Station Tracking)</div>
+    <div class="version-tag">v17.12 (Cloud Job Count)</div>
 
     <script>
       var delayTime = 3000;     
       var syncInterval = 5000;
-      var configInterval = 10000; 
+      var configInterval = 10000;
       var cloudPollInterval = 10000;
+      var jobCountInterval = 15000; // ดึงยอดสแกนสะสมของ Job Order จาก Sheet
       
       var localDB = {};
       var capDB = {};
@@ -336,11 +337,21 @@
       var pendingModelVal = "";
       var isTestMode = false;
       var preTestHistory = null; // snapshot ข้อมูลจริงก่อนเข้า Test Mode
-      var preTestJobScanHistory = null;
       var preTestJobOverrideSet = null;
       var currentStation = localStorage.getItem('station_id') || "";
       var jobScanHistory = JSON.parse(localStorage.getItem('job_scan_history')) || {};
       var jobOverrideSet = {}; // job codes allowed (this session) to exceed Plan qty
+
+      // ยอดสแกนของ Job Order ใช้ข้อมูลจาก Sheet เป็นหลัก (รวมทุกเครื่อง/ทุกวัน) แล้วบวก
+      // ยอดที่เพิ่งสแกนในเครื่องนี้แต่ Sheet ยังไม่รู้ เพื่อไม่ให้ตัวเลขบนจอกระพริบถอยหลัง
+      var cloudJobCounts = {};        // job -> ยอดจาก Sheet (ไม่นับ VOID)
+      var cloudJobCountsReady = false; // false = ยังดึงไม่สำเร็จ ให้ fallback เป็นยอดในเครื่อง
+      var isFetchingJobCounts = false;
+      var jobUnsentDelta = {};        // ยอดที่สแกนแล้วแต่ยังอยู่ใน pendingQueue (ยังไม่เข้า Sheet)
+      var jobInflightDeltas = [];     // [{job, qty, seq}] บันทึกลง Sheet แล้ว แต่ยอด cloud รอบล่าสุดอาจยังไม่รวม
+      var jobTestDelta = {};          // ยอดสแกนใน Test Mode (ไม่ถูกบันทึกลง Sheet)
+      var syncSeqCounter = 0;
+      var syncSeqConfirmed = 0;       // seq ของ batch ล่าสุดที่ Sheet ยืนยันว่าบันทึกแล้ว
       var pendingOverrideJob = "";
       const ADMIN_PASSWORD = "1234";
 
@@ -369,7 +380,10 @@
       
       if(isGoogleScriptReady() && !isDashboardMode && currentJob !== "N/A" && currentJob !== "MANUAL_MODE") {
           google.script.run.withSuccessHandler(function(jobs) {
-             if(jobs && !jobs[0]?.error) jobs.forEach(j => { jobDataMap[j.job] = { model: j.model, qty: j.qty }; });
+             if(jobs && !jobs[0]?.error) {
+                jobs.forEach(j => { jobDataMap[j.job] = { model: j.model, qty: j.qty }; });
+                updateJobDisplay(); // Plan/คงเหลือ เพิ่งพร้อมใช้หลังโหลดเสร็จ
+             }
           }).withFailureHandler(function(err) {
              console.error("Init getActiveJobOrders failed:", err);
           }).getActiveJobOrders();
@@ -390,7 +404,7 @@
         var lastDate = localStorage.getItem('prod_date');
         if (lastDate !== today && !isDashboardMode) {
             productionHistory = {};
-            jobScanHistory = {};
+            jobScanHistory = {}; // ตัวนับสำรองรายวันของเครื่องนี้ (ยอดจริงของ Job อ่านจาก Sheet)
             localStorage.setItem('prod_date', today);
             localStorage.setItem('prod_history', JSON.stringify(productionHistory));
             localStorage.setItem('job_scan_history', JSON.stringify(jobScanHistory));
@@ -409,6 +423,8 @@
         }
         
         setInterval(syncConfig, configInterval);
+        setInterval(fetchJobScanCounts, jobCountInterval);
+        fetchJobScanCounts();
 
         if(currentModel) document.getElementById('current-model-display').innerText = currentModel;
         if(!isDashboardMode) restoreHistory();
@@ -465,7 +481,11 @@
               el.innerText = "MANUAL (No Check)";
               el.style.color = "#FF9800";
           } else if (currentJob && currentJob !== "N/A" && jobDataMap[currentJob]) {
-              el.innerText = currentJob + " (Plan: " + jobDataMap[currentJob].qty + " | Scanned: " + getJobScannedCount(currentJob) + ")";
+              var scannedTxt = "Plan: " + jobDataMap[currentJob].qty + " | Scanned: " + getJobScannedCount(currentJob);
+              var remaining = getJobRemainingCount(currentJob);
+              if (remaining !== null) scannedTxt += " | คงเหลือ: " + remaining;
+              if (!isJobCountFromCloud()) scannedTxt += " ⚠เฉพาะเครื่องนี้";
+              el.innerText = currentJob + " (" + scannedTxt + ")";
               el.style.color = "#E65100";
           } else {
               el.innerText = currentJob;
@@ -677,15 +697,82 @@
           updateUI();
       }
 
+      // ยอดที่สแกนในเครื่องนี้แต่ Sheet/รอบดึงข้อมูลล่าสุดยังไม่รวม
+      function getLocalPendingCount(job) {
+          var n = (jobUnsentDelta[job] || 0) + (jobTestDelta[job] || 0);
+          for (var i = 0; i < jobInflightDeltas.length; i++) {
+              if (jobInflightDeltas[i].job === job) n += jobInflightDeltas[i].qty;
+          }
+          return n;
+      }
+
+      // true = ยอดที่แสดงเป็นยอดรวมจาก Sheet (ทุกเครื่อง), false = ยอดเฉพาะเครื่องนี้
+      function isJobCountFromCloud() {
+          return cloudJobCountsReady;
+      }
+
       function getJobScannedCount(job) {
-          return jobScanHistory[job] || 0;
+          if (!cloudJobCountsReady) {
+              // ยังดึงยอดจาก Sheet ไม่สำเร็จ ใช้ตัวนับในเครื่องไปก่อน
+              return (jobScanHistory[job] || 0) + (jobTestDelta[job] || 0);
+          }
+          return (cloudJobCounts[job] || 0) + getLocalPendingCount(job);
+      }
+
+      function getJobRemainingCount(job) {
+          var planQty = (jobDataMap[job] && parseInt(jobDataMap[job].qty)) || 0;
+          if (planQty <= 0) return null;
+          return Math.max(0, planQty - getJobScannedCount(job));
       }
 
       function incrementJobScanCount(job, qty) {
           qty = Number(qty);
           qty = (!isNaN(qty) && qty > 0) ? qty : 1;
+          if (isTestMode) {
+              // Test Mode ไม่ถูกส่งขึ้น Sheet จึงนับแยกและล้างทิ้งเมื่อออกจากโหมด
+              jobTestDelta[job] = (jobTestDelta[job] || 0) + qty;
+              return;
+          }
+          jobUnsentDelta[job] = (jobUnsentDelta[job] || 0) + qty;
           jobScanHistory[job] = (jobScanHistory[job] || 0) + qty;
           localStorage.setItem('job_scan_history', JSON.stringify(jobScanHistory));
+      }
+
+      function fetchJobScanCounts() {
+          if (!isGoogleScriptReady()) {
+              markLocalPreviewMode();
+              return;
+          }
+          if (isFetchingJobCounts) return;
+          if (isSyncing) return; // กำลังส่งยอดขึ้น Sheet อยู่ ผลที่ได้จะคาบเกี่ยวกัน รอรอบหน้า
+
+          isFetchingJobCounts = true;
+
+          // batch ที่ Sheet ยืนยันก่อนเริ่มดึง ย่อมถูกนับอยู่ในผลลัพธ์รอบนี้แล้ว
+          var seqAtStart = syncSeqConfirmed;
+
+          google.script.run.withSuccessHandler(function(jsonStr) {
+              isFetchingJobCounts = false;
+              var res;
+              try { res = JSON.parse(jsonStr); } catch (e) { res = null; }
+              if (!res || !res.ok || !res.counts) {
+                  console.error("getJobScanCounts failed:", res ? res.message : jsonStr);
+                  return;
+              }
+              if (syncSeqConfirmed !== seqAtStart) {
+                  // มี batch ถูกบันทึกลง Sheet ระหว่างที่กำลังดึงยอดรอบนี้ ไม่มีทางรู้ว่ายอดที่ได้
+                  // รวม batch นั้นแล้วหรือยัง ถ้านับต่อจะกลายเป็นนับซ้ำ — ทิ้งผลรอบนี้ไปรอรอบหน้า
+                  // (ยอดบนจอยังถูกต้อง เพราะ jobInflightDeltas ยังไม่ถูกล้าง)
+                  return;
+              }
+              cloudJobCounts = res.counts;
+              cloudJobCountsReady = true;
+              jobInflightDeltas = jobInflightDeltas.filter(function(e) { return e.seq > seqAtStart; });
+              updateJobDisplay();
+          }).withFailureHandler(function(err) {
+              isFetchingJobCounts = false;
+              console.error("getJobScanCounts failed:", err);
+          }).getJobScanCounts();
       }
 
       function overrideJobComplete() {
@@ -709,8 +796,9 @@
           }
           var planQty = parseInt(jobDataMap[currentJob].qty) || 0;
           var scanned = getJobScannedCount(currentJob);
+          var scannedLabel = isJobCountFromCloud() ? "สแกนแล้ว (ทุกเครื่อง)" : "สแกนแล้ว (เครื่องนี้)";
           document.getElementById('edit-job-count-info').innerHTML =
-              `Job: <b>${currentJob}</b><br>Plan: <b>${planQty}</b><br>สแกนแล้ว (เครื่องนี้): <b>${scanned}</b>`;
+              `Job: <b>${currentJob}</b><br>Plan: <b>${planQty}</b><br>${scannedLabel}: <b>${scanned}</b>`;
           document.getElementById('edit-job-count-input').value = "";
           document.getElementById('edit-job-count-admin-pass').value = "";
           document.getElementById('editJobCountModal').style.display = 'flex';
@@ -735,13 +823,16 @@
           // ยอด Sheet คือข้อมูลหลัก: Void ตามจำนวนที่ขอเต็มๆ (ยอดจริงอาจสแกนจากเครื่องอื่น
           // หรือ counter ในเครื่องเพิ่งถูกรีเซ็ตข้ามวัน) แล้วค่อยลดยอดในเครื่องตามจำนวนที่
           // Void สำเร็จจริง เพื่อไม่ให้ desync เมื่อ backend ล้มเหลวหรือกดซ้ำ
+          // หมายเหตุ: ลดเฉพาะ "ตัวนับสำรองในเครื่อง" (ใช้ตอนดึงยอดจาก Sheet ไม่ได้)
+          // ส่วนยอดที่แสดงจริงจะถูกต้องเองหลัง fetchJobScanCounts() รอบถัดไป
           function applyLocalRemove(count) {
-              var removed = Math.min(count, getJobScannedCount(job));
+              var localCount = jobScanHistory[job] || 0;
+              var removed = Math.min(count, localCount);
               if (removed > 0) {
-                  jobScanHistory[job] = getJobScannedCount(job) - removed;
+                  jobScanHistory[job] = localCount - removed;
                   localStorage.setItem('job_scan_history', JSON.stringify(jobScanHistory));
-                  updateJobDisplay();
               }
+              updateJobDisplay();
               return removed;
           }
 
@@ -758,6 +849,7 @@
               document.getElementById('sync-status').innerText = "System Ready";
               if (res && res.success) {
                   applyLocalRemove(res.voided);
+                  fetchJobScanCounts(); // ยอดใน Sheet เปลี่ยนแล้ว ดึงใหม่ให้ตรงทันที
                   alert(res.voided > 0
                       ? ("แก้ไขยอดสำเร็จ: Void " + res.voided + " รายการใน Sheet")
                       : "ไม่พบรายการของ Job นี้ใน Sheet ที่ยังไม่ถูก Void\n(ยอดในเครื่องไม่ถูกเปลี่ยนแปลง)");
@@ -932,6 +1024,7 @@
           var selectBox = document.getElementById('job-input');
           selectBox.innerHTML = '<option value="">Loading...</option>';
           document.getElementById('jobModal').style.display = 'flex';
+          fetchJobScanCounts();
           
           if (!isGoogleScriptReady()) {
               selectBox.innerHTML = "";
@@ -962,9 +1055,17 @@
 
                   jobs.forEach(function(j) {
                       var option = document.createElement("option");
-                      option.text = `Plan: ${j.qty} | ${j.job} | ${j.model}`;
-                      option.value = j.job;
                       jobDataMap[j.job] = { model: j.model, qty: j.qty };
+
+                      var remainTxt = "";
+                      if (isJobCountFromCloud()) {
+                          var remain = getJobRemainingCount(j.job);
+                          remainTxt = (remain !== null)
+                              ? ` | สแกนแล้ว: ${getJobScannedCount(j.job)} | เหลือ: ${remain}`
+                              : ` | สแกนแล้ว: ${getJobScannedCount(j.job)}`;
+                      }
+                      option.text = `Plan: ${j.qty}${remainTxt} | ${j.job} | ${j.model}`;
+                      option.value = j.job;
 
                       if (j.job === currentJob) option.selected = true;
                       selectBox.add(option);
@@ -1099,6 +1200,7 @@
           }
           
           updateJobDisplay();
+          fetchJobScanCounts(); // เปลี่ยน Job แล้วให้เห็นยอดคงเหลือล่าสุดทันที
           if(document.getElementById('jobModal').style.display === 'flex') {
               closeJobModal();
           }
@@ -1143,9 +1245,25 @@
                  return;
              }
              pendingQueue.splice(0, batchToSend.length);
+             // ย้ายยอดของ batch นี้จาก "ยังไม่ส่ง" ไปเป็น "ส่งแล้วรอ cloud ยืนยัน"
+             // เพื่อให้ยอดบนจอไม่ลดลงชั่วขณะระหว่างรอดึงยอดรอบใหม่จาก Sheet
+             var batchByJob = {};
+             batchToSend.forEach(function(row) {
+                 var j = row[1];
+                 batchByJob[j] = (batchByJob[j] || 0) + 1;
+             });
+             syncSeqCounter++;
+             Object.keys(batchByJob).forEach(function(j) {
+                 jobUnsentDelta[j] = Math.max(0, (jobUnsentDelta[j] || 0) - batchByJob[j]);
+                 jobInflightDeltas.push({ job: j, qty: batchByJob[j], seq: syncSeqCounter });
+             });
+             syncSeqConfirmed = syncSeqCounter;
+
              document.getElementById('sync-status').innerText = "Synced";
              document.getElementById('sync-status').style.color = "#00e676";
              updateSyncStatus();
+             updateJobDisplay();
+             fetchJobScanCounts();
          }).withFailureHandler(function(err){
              isSyncing = false;
              var errMsg = (err && err.message) ? err.message : (err || "Unknown error");
@@ -1174,8 +1292,8 @@
          if (isTestMode) {
             // บันทึก snapshot ข้อมูลจริงก่อนเข้า Test Mode
             preTestHistory = JSON.parse(JSON.stringify(productionHistory));
-            preTestJobScanHistory = JSON.parse(JSON.stringify(jobScanHistory));
             preTestJobOverrideSet = JSON.parse(JSON.stringify(jobOverrideSet));
+            jobTestDelta = {}; // ยอด Job ใน Test Mode นับแยก ไม่แตะยอดจริง/ยอดบน Sheet
             btn.classList.add('active');
             banner.style.display = 'block';
             document.body.classList.add('test-mode');
@@ -1194,12 +1312,8 @@
                localStorage.setItem('prod_history', JSON.stringify(productionHistory));
                updateUI();
             }
-            if (preTestJobScanHistory !== null) {
-               jobScanHistory = preTestJobScanHistory;
-               preTestJobScanHistory = null;
-               localStorage.setItem('job_scan_history', JSON.stringify(jobScanHistory));
-               updateJobDisplay();
-            }
+            jobTestDelta = {};
+            updateJobDisplay();
             if (preTestJobOverrideSet !== null) {
                jobOverrideSet = preTestJobOverrideSet;
                preTestJobOverrideSet = null;
