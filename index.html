@@ -299,7 +299,7 @@
       </div>
     </div>
     
-    <div class="version-tag">v17.12 (Cloud Job Count)</div>
+    <div class="version-tag">v17.13 (Cloud Job Count)</div>
 
     <script>
       var delayTime = 3000;     
@@ -344,7 +344,8 @@
 
       // ยอดสแกนของ Job Order ใช้ข้อมูลจาก Sheet เป็นหลัก (รวมทุกเครื่อง/ทุกวัน) แล้วบวก
       // ยอดที่เพิ่งสแกนในเครื่องนี้แต่ Sheet ยังไม่รู้ เพื่อไม่ให้ตัวเลขบนจอกระพริบถอยหลัง
-      var cloudJobCounts = {};        // job -> ยอดจาก Sheet (ไม่นับ VOID)
+      var cloudJobCounts = {};        // job -> ยอดนับแถวใน Log (ไม่นับ VOID)
+      var planJobCounts = {};         // job -> ยอด "Actual Scan" ที่หลังบ้านคุมไว้ในชีท Plan
       var cloudJobCountsReady = false; // false = ยังดึงไม่สำเร็จ ให้ fallback เป็นยอดในเครื่อง
       var isFetchingJobCounts = false;
       var jobUnsentDelta = {};        // ยอดที่สแกนแล้วแต่ยังอยู่ใน pendingQueue (ยังไม่เข้า Sheet)
@@ -716,7 +717,13 @@
               // ยังดึงยอดจาก Sheet ไม่สำเร็จ ใช้ตัวนับในเครื่องไปก่อน
               return (jobScanHistory[job] || 0) + (jobTestDelta[job] || 0);
           }
-          return (cloudJobCounts[job] || 0) + getLocalPendingCount(job);
+          // ยอดจาก Sheet มี 2 แหล่ง: นับแถวใน Log กับช่อง "Actual Scan" ในชีท Plan
+          // ใช้ค่าที่มากกว่า — ถ้า Actual Scan เป็นสูตรที่นับ Log อยู่แล้วสองค่าจะเท่ากัน
+          // ถ้าหลังบ้านคุมยอดเอง (กรอกมือ/มาจากระบบอื่น) ก็ยังเห็นยอดจริงของออร์เดอร์
+          // และถ้าช่องนั้นค้างเก่ากว่าการสแกนจริง ยอดนับจาก Log จะพาขึ้นแทน
+          var fromLog = cloudJobCounts[job] || 0;
+          var fromPlan = planJobCounts[job] || 0;
+          return Math.max(fromLog, fromPlan) + getLocalPendingCount(job);
       }
 
       function getJobRemainingCount(job) {
@@ -766,6 +773,7 @@
                   return;
               }
               cloudJobCounts = res.counts;
+              planJobCounts = res.planCounts || {};
               cloudJobCountsReady = true;
               jobInflightDeltas = jobInflightDeltas.filter(function(e) { return e.seq > seqAtStart; });
               updateJobDisplay();
