@@ -17,6 +17,10 @@ var JOB_COUNT_SNAPSHOT_KEY = "JOB_SCAN_SNAPSHOT_V1";
 var JOB_COUNT_SNAPSHOT_TTL = 21600; // 6 ชม.
 var JOB_COUNT_FULL_RECOUNT_MS = 10 * 60 * 1000; // นับใหม่ทั้งชีททุก 10 นาที เผื่อมีคนแก้ Log ย้อนหลัง
 
+// ยอด "Actual Scan" จากชีท Plan (แหล่งของหลังบ้าน) อ่านใหม่ทุก 1 นาทีก็พอ เพราะเป็นยอดสรุป
+var PLAN_SCAN_CACHE_KEY = "PLAN_ACTUAL_SCAN_V1";
+var PLAN_SCAN_CACHE_SEC = 60;
+
 // ==========================================
 // WEB APP SERVING
 // ==========================================
@@ -184,11 +188,64 @@ function getJobScanCounts() {
     if (cache) {
       try { cache.put(JOB_COUNT_SNAPSHOT_KEY, JSON.stringify(snap), JOB_COUNT_SNAPSHOT_TTL); } catch (e) {}
     }
-    return JSON.stringify({ ok: true, counts: snap.counts });
+    return JSON.stringify({ ok: true, counts: snap.counts, planCounts: getPlanActualScanCounts_() });
   } catch (e) {
     // ห้ามส่ง counts ว่างเมื่อ error เพราะฝั่งหน้าจอจะเข้าใจผิดว่ายอดสแกนเป็น 0
     return JSON.stringify({ ok: false, message: e.message });
   }
+}
+
+// ยอด "Actual Scan" ที่หลังบ้านคุมไว้ในชีท Plan (คนละแหล่งกับการนับแถวใน Log)
+// หาคอลัมน์จากชื่อหัวตาราง ไม่ยึดตำแหน่งคอลัมน์ เผื่อมีการแทรก/ย้ายคอลัมน์ในอนาคต
+function getPlanActualScanCounts_() {
+  var cache = null;
+  try {
+    cache = CacheService.getScriptCache();
+    var raw = cache.get(PLAN_SCAN_CACHE_KEY);
+    if (raw) return JSON.parse(raw);
+  } catch (e) {
+    cache = null;
+  }
+
+  var counts = {};
+  try {
+    var sheet = SpreadsheetApp.openById(CAP_SPREADSHEET_ID).getSheetByName(PLAN_SHEET_NAME);
+    if (!sheet) return counts;
+
+    var lastRow = sheet.getLastRow();
+    var lastCol = sheet.getLastColumn();
+    if (lastRow < 2 || lastCol < 1) return counts;
+
+    var headers = sheet.getRange(1, 1, 1, lastCol).getValues()[0];
+    var scanColIndex = -1;
+    headers.forEach(function(header, index) {
+      if (String(header).trim().toLowerCase() === "actual scan") scanColIndex = index;
+    });
+    if (scanColIndex < 0) return counts; // ไม่มีคอลัมน์นี้ ก็ใช้ยอดจาก Log อย่างเดียว
+
+    var data = sheet.getRange(2, 1, lastRow - 1, lastCol).getValues();
+    for (var i = 0; i < data.length; i++) {
+      var job = String(data[i][3]).trim(); // Job Order = Col D เหมือน getActiveJobOrders
+      if (job === "") continue;
+      var n = toNonNegativeInt_(data[i][scanColIndex]);
+      if (n !== null) counts[job] = n; // Job ซ้ำ ใช้แถวล่างสุดเป็นค่าล่าสุด
+    }
+  } catch (e) {
+    return {}; // อ่านชีท Plan ไม่ได้ ไม่ใช่เหตุให้ยอดจาก Log ใช้ไม่ได้
+  }
+
+  if (cache) {
+    try { cache.put(PLAN_SCAN_CACHE_KEY, JSON.stringify(counts), PLAN_SCAN_CACHE_SEC); } catch (e) {}
+  }
+  return counts;
+}
+
+// รับค่าที่อาจเป็นตัวเลข, ข้อความ "1,186" หรือช่องว่าง/สูตร error -> คืน null เมื่อใช้ไม่ได้
+function toNonNegativeInt_(value) {
+  if (value === "" || value === null || value === undefined) return null;
+  var n = Number(String(value).replace(/,/g, "").trim());
+  if (isNaN(n) || n < 0) return null;
+  return Math.round(n);
 }
 
 // Void เป็นการแก้แถวเก่า ซึ่งการนับแบบเพิ่มทีละแถวใหม่จะมองไม่เห็น จึงต้องล้าง snapshot
