@@ -9,6 +9,14 @@ var CAP_SPREADSHEET_ID = "1PYcAatoJ4QX28uQ_LF8dDC6oTiMWbfPs5TZDfGJVa4U";
 var CAP_SHEET_NAME = "Cap";
 var PLAN_SHEET_NAME = "Plan";
 
+// Snapshot ยอดสแกนราย Job Order: เก็บผลนับไว้พร้อมเลขแถวสุดท้ายที่นับไปแล้ว
+// รอบถัดไปจึงอ่านเฉพาะแถวใหม่ (ไม่ต้องอ่าน Log ทั้งชีททุกครั้งที่เครื่องสแกน poll เข้ามา)
+// แต่ยอดที่ได้ยังเป็นข้อมูลล่าสุดเสมอ — สำคัญ เพราะฝั่งหน้าจอใช้ยืนยันว่ายอดที่เพิ่งส่งขึ้น Sheet
+// ถูกนับรวมแล้วหรือยัง
+var JOB_COUNT_SNAPSHOT_KEY = "JOB_SCAN_SNAPSHOT_V1";
+var JOB_COUNT_SNAPSHOT_TTL = 21600; // 6 ชม.
+var JOB_COUNT_FULL_RECOUNT_MS = 10 * 60 * 1000; // นับใหม่ทั้งชีททุก 10 นาที เผื่อมีคนแก้ Log ย้อนหลัง
+
 // ==========================================
 // WEB APP SERVING
 // ==========================================
@@ -133,6 +141,61 @@ function saveBatchData(jsonString) {
   }
 }
 
+// 4a. ยอดสแกนสะสมของแต่ละ Job Order จาก Log (รวมทุกเครื่อง/ทุกวัน, ไม่นับแถวที่ VOID)
+// ใช้เป็นค่าหลักในการแสดง "Scanned / คงเหลือ" ให้พนักงานเห็นตรงกันทุก Line
+function getJobScanCounts() {
+  try {
+    var ss = SpreadsheetApp.getActiveSpreadsheet();
+    var sheet = ss.getSheetByName(LOG_SHEET_NAME);
+    if (!sheet) return JSON.stringify({ ok: false, message: "Sheet '" + LOG_SHEET_NAME + "' Not Found" });
+
+    var lastRow = sheet.getLastRow();
+    var cache = null;
+    var snap = null;
+    try {
+      cache = CacheService.getScriptCache();
+      var raw = cache.get(JOB_COUNT_SNAPSHOT_KEY);
+      if (raw) snap = JSON.parse(raw);
+    } catch (e) {
+      cache = null;
+      snap = null;
+    }
+
+    var now = new Date().getTime();
+    var snapUsable = snap && snap.counts && typeof snap.lastRow === "number" &&
+                     snap.lastRow >= 1 && snap.lastRow <= lastRow &&
+                     snap.fullAt && (now - snap.fullAt) <= JOB_COUNT_FULL_RECOUNT_MS;
+
+    // นับใหม่ทั้งชีทเมื่อ: ยังไม่มี snapshot / snapshot หมดอายุ / มีการลบแถวใน Log
+    if (!snapUsable) snap = { counts: {}, lastRow: 1, fullAt: now };
+
+    if (lastRow > snap.lastRow) {
+      // อ่านเฉพาะแถวใหม่ คอลัมน์ B..E (Job, Model, Barcode, Status)
+      var data = sheet.getRange(snap.lastRow + 1, 2, lastRow - snap.lastRow, 4).getValues();
+      for (var i = 0; i < data.length; i++) {
+        var job = String(data[i][0]).trim();
+        if (job === "") continue;
+        if (String(data[i][3]).trim().toUpperCase() === "VOID") continue;
+        snap.counts[job] = (snap.counts[job] || 0) + 1;
+      }
+      snap.lastRow = lastRow;
+    }
+
+    if (cache) {
+      try { cache.put(JOB_COUNT_SNAPSHOT_KEY, JSON.stringify(snap), JOB_COUNT_SNAPSHOT_TTL); } catch (e) {}
+    }
+    return JSON.stringify({ ok: true, counts: snap.counts });
+  } catch (e) {
+    // ห้ามส่ง counts ว่างเมื่อ error เพราะฝั่งหน้าจอจะเข้าใจผิดว่ายอดสแกนเป็น 0
+    return JSON.stringify({ ok: false, message: e.message });
+  }
+}
+
+// Void เป็นการแก้แถวเก่า ซึ่งการนับแบบเพิ่มทีละแถวใหม่จะมองไม่เห็น จึงต้องล้าง snapshot
+function clearJobScanCountCache_() {
+  try { CacheService.getScriptCache().remove(JOB_COUNT_SNAPSHOT_KEY); } catch (e) {}
+}
+
 // 4b. แก้ไขยอดเกิน: Void รายการสแกนล่าสุดของ Job Order ที่ระบุ (ไม่ลบแถวจริง เพื่อให้ตรวจสอบย้อนหลังได้)
 function voidLastJobScans(job, count, passwordInput) {
   if (passwordInput !== ADMIN_PASSWORD) {
@@ -173,6 +236,7 @@ function voidLastJobScans(job, count, passwordInput) {
 
     SpreadsheetApp.flush();
     lock.releaseLock();
+    clearJobScanCountCache_(); // ให้ทุกเครื่องเห็นยอดใหม่ทันที ไม่ต้องรอ cache หมดอายุ
     return { success: true, message: "Voided " + voided + " record(s) for job " + job, voided: voided };
   } catch (e) {
     return { success: false, message: "Error: " + e.message };
