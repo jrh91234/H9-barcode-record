@@ -299,7 +299,7 @@
       </div>
     </div>
     
-    <div class="version-tag">v17.14 (Sheet Multiply)</div>
+    <div class="version-tag">v17.15 (Cloud Screen Restore)</div>
 
     <script>
       var delayTime = 3000;     
@@ -428,7 +428,10 @@
         fetchJobScanCounts();
 
         if(currentModel) document.getElementById('current-model-display').innerText = currentModel;
-        if(!isDashboardMode) restoreHistory();
+        if(!isDashboardMode) {
+            restoreHistory();
+            hydrateFromSheet(); // กู้ยอดวันนี้ของ Line จาก Log หลัง refresh/deploy
+        }
 
         if (isGoogleScriptReady()) {
             // CURRENT_MODEL บน Server เป็นค่ากลาง ใช้เป็นค่าเริ่มต้นเฉพาะเครื่องที่ยังไม่เคยตั้ง Model เอง
@@ -890,6 +893,57 @@
          localStorage.setItem('prod_history', JSON.stringify(productionHistory));
       }
 
+      // กู้ CURRENT MODEL COUNT, TOTAL TODAY และยอดรายชั่วโมงจาก Log ของ Line นี้
+      // localStorage ของ Apps Script อาจว่างเมื่อ deployment/sandbox origin เปลี่ยน
+      function hydrateFromSheet() {
+          if (isDashboardMode || !isGoogleScriptReady() || !currentStation) return;
+
+          google.script.run.withSuccessHandler(function(jsonStr) {
+              if (isTestMode) return; // ไม่ทับข้อมูลทดลองหรือ snapshot ก่อนเข้า Test Mode
+
+              try {
+                  var rows = JSON.parse(jsonStr);
+                  if (!Array.isArray(rows)) throw new Error("Invalid station history response");
+
+                  var hist = {};
+                  rows.forEach(function(row) {
+                      var model = String(row.model || "").trim();
+                      var hour = String(row.hour || "").padStart(2, '0');
+                      if (!model || !/^\d{2}$/.test(hour)) return;
+
+                      if (!hist[model]) hist[model] = { total: 0, hourly: {} };
+                      hist[model].total++;
+                      hist[model].hourly[hour] = (hist[model].hourly[hour] || 0) + 1;
+                  });
+
+                  // รายการที่สแกนระหว่างรอ Cloud ยังไม่อยู่ใน Log จึงต้องบวกกลับเข้าไป
+                  pendingQueue.forEach(function(rec) {
+                      var model = String(rec[2] || "").trim();
+                      if (!model) return;
+
+                      var timeMatch = rec[0] ? String(rec[0]).match(/(\d+):(\d+):(\d+)/) : null;
+                      var hour = timeMatch
+                          ? timeMatch[1].padStart(2, '0')
+                          : new Date().getHours().toString().padStart(2, '0');
+
+                      if (!hist[model]) hist[model] = { total: 0, hourly: {} };
+                      hist[model].total++;
+                      hist[model].hourly[hour] = (hist[model].hourly[hour] || 0) + 1;
+                  });
+
+                  productionHistory = hist;
+                  localStorage.setItem('prod_date', new Date().toDateString());
+                  localStorage.setItem('prod_history', JSON.stringify(productionHistory));
+                  updateUI();
+              } catch (e) {
+                  console.error("hydrateFromSheet error:", e);
+              }
+          }).withFailureHandler(function(err) {
+              // Cloud ล้มเหลวให้คงยอด localStorage เดิมไว้ ไม่เปลี่ยนหน้าจอเป็นศูนย์
+              console.error("hydrateFromSheet failed:", err);
+          }).getTodayStationData(currentStation);
+      }
+
       function restoreHistory() { 
           productionHistory = JSON.parse(localStorage.getItem('prod_history')) || {};
           updateUI(); updateSyncStatus(); 
@@ -1149,11 +1203,13 @@
               if (pass !== "1234") { alert("❌ รหัสผ่านไม่ถูกต้อง!"); return; }
           }
 
+          var stationChanged = (val !== currentStation);
           currentStation = val;
           localStorage.setItem('station_id', currentStation);
           updateStationDisplay();
           document.getElementById('stationModal').style.display = 'none';
           refocusTrap();
+          if (stationChanged) hydrateFromSheet();
       }
       
       function saveJobOrder() {
