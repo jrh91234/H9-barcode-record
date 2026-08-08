@@ -26,7 +26,7 @@ var PLAN_SCAN_CACHE_SEC = 60;
 // ==========================================
 function doGet() {
   return HtmlService.createHtmlOutputFromFile('Index')
-      .setTitle('Scanner v17.2 Auto Check')
+      .setTitle('Scanner v17.17 Shift Window')
       .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
 }
 
@@ -332,7 +332,66 @@ function normalizeThaiYear_(year) {
   return n >= 2400 ? n : n + 543;
 }
 
-// อ่านแถว Log ของวันนี้ที่ยังไม่ VOID
+// แปลงปีที่รับเข้ามาให้เป็น ค.ศ. สำหรับสร้างคีย์วันที่แบบไม่ขึ้นกับ timezone
+function toGregorianYear_(year) {
+  var n = parseInt(year, 10);
+  if (isNaN(n)) return NaN;
+  return n >= 2400 ? n - 543 : n;
+}
+
+// แยก Timestamp จาก Google Sheets ทั้งแบบ Date object และข้อความ
+function parseLogTimestamp_(value) {
+  if (value instanceof Date && !isNaN(value.getTime())) {
+    return {
+      day: value.getDate(),
+      month: value.getMonth() + 1,
+      year: value.getFullYear(),
+      hour: value.getHours(),
+      minute: value.getMinutes()
+    };
+  }
+
+  var str = String(value || "").trim();
+  if (!str) return null;
+
+  var parts = str.split(/\s+/);
+  var dateParts = parts[0].split(/[\/-]/);
+  var timeParts = (parts[1] || "0:0:0").split(":");
+  if (dateParts.length !== 3) return null;
+
+  var first = parseInt(dateParts[0], 10);
+  var second = parseInt(dateParts[1], 10);
+  var third = parseInt(dateParts[2], 10);
+  if ([first, second, third].some(isNaN)) return null;
+
+  var isYearFirst = String(dateParts[0]).length === 4;
+  return {
+    day: isYearFirst ? third : first,
+    month: second,
+    year: isYearFirst ? first : third,
+    hour: parseInt(timeParts[0], 10) || 0,
+    minute: parseInt(timeParts[1], 10) || 0
+  };
+}
+
+// คืนคีย์ของกะ: 08:00-20:00 หรือ 20:00-08:00
+// เวลา 00:00-07:59 จะใช้วันที่เริ่มกะของวันก่อนหน้า
+function getShiftKey_(year, month, day, hour) {
+  var gregorianYear = toGregorianYear_(year);
+  var h = parseInt(hour, 10);
+  if (isNaN(gregorianYear) || isNaN(h)) return "";
+
+  var shiftStartHour = (h >= 8 && h < 20) ? 8 : 20;
+  var shiftDate = new Date(Date.UTC(gregorianYear, month - 1, day));
+  if (h < 8) shiftDate.setUTCDate(shiftDate.getUTCDate() - 1);
+
+  var yyyy = shiftDate.getUTCFullYear();
+  var mm = String(shiftDate.getUTCMonth() + 1).padStart(2, '0');
+  var dd = String(shiftDate.getUTCDate()).padStart(2, '0');
+  return yyyy + '-' + mm + '-' + dd + '@' + String(shiftStartHour).padStart(2, '0');
+}
+
+// อ่านแถว Log ของกะปัจจุบันที่ยังไม่ VOID
 // คืน [{job, model, hour, station}] เพื่อใช้ทั้ง Dashboard และกู้หน้าจอหลัง refresh
 function readTodayLogRows_() {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
@@ -348,54 +407,37 @@ function readTodayLogRows_() {
 
   var data = sheet.getRange(2, 1, lastRow - 1, numCols).getValues();
   var now = new Date();
-  var todayDay   = now.getDate();
-  var todayMonth = now.getMonth() + 1;
-  var todayYear  = normalizeThaiYear_(now.getFullYear());
-  var todayRows  = [];
+  var currentShiftKey = getShiftKey_(now.getFullYear(), now.getMonth() + 1, now.getDate(), now.getHours());
+  var shiftRows = [];
 
   for (var i = 0; i < data.length; i++) {
-    var rowDay, rowMonth, rowYear, rowHour;
-
-    if (data[i][0] instanceof Date) {
-      var d = data[i][0];
-      rowDay   = d.getDate();
-      rowMonth = d.getMonth() + 1;
-      rowYear  = normalizeThaiYear_(d.getFullYear());
-      rowHour  = d.getHours().toString().padStart(2, '0');
-    } else {
-      var str      = String(data[i][0]);
-      var datePart = str.split(" ")[0]; // "14/3/2569"
-      var timePart = str.split(" ")[1]; // "8:19:39"
-      var dp = datePart.split("/");
-      rowDay   = parseInt(dp[0]);
-      rowMonth = parseInt(dp[1]);
-      rowYear  = normalizeThaiYear_(dp[2]);
-      rowHour  = (timePart ? timePart.split(":")[0] : "0").padStart(2, '0');
-    }
+    var timestamp = parseLogTimestamp_(data[i][0]);
+    if (!timestamp) continue;
 
     var model = String(data[i][2] || "").trim();
     var status = String(data[i][4] || "").trim().toUpperCase();
-    if (rowDay === todayDay && rowMonth === todayMonth && rowYear === todayYear && status !== "VOID" && model !== "") {
-      todayRows.push({
+    var rowShiftKey = getShiftKey_(timestamp.year, timestamp.month, timestamp.day, timestamp.hour);
+    if (rowShiftKey === currentShiftKey && status !== "VOID" && model !== "") {
+      shiftRows.push({
         job: String(data[i][1] || "").trim(),
         model: model,
-        hour: rowHour,
+        hour: String(timestamp.hour).padStart(2, '0'),
         station: numCols >= 6 ? String(data[i][5] || "").trim() : ""
       });
     }
   }
-  return todayRows;
+  return shiftRows;
 }
 
-// ดึงข้อมูลการผลิตวันนี้ทุก Line (ใช้โดย Dashboard mode)
+// ดึงข้อมูลการผลิตของกะปัจจุบันทุก Line (ใช้โดย Dashboard mode)
 function getTodayProductionData() {
-  var todayData = readTodayLogRows_().map(function(row) {
+  var shiftData = readTodayLogRows_().map(function(row) {
     return { model: row.model, hour: row.hour };
   });
-  return JSON.stringify(todayData);
+  return JSON.stringify(shiftData);
 }
 
-// ดึงข้อมูลการผลิตวันนี้เฉพาะ Line เพื่อกู้ยอดหน้าจอหลัง refresh/deploy
+// ดึงข้อมูลการผลิตของกะปัจจุบันเฉพาะ Line เพื่อกู้ยอดหน้าจอหลัง refresh/deploy
 function getTodayStationData(station) {
   var targetStation = String(station || "").trim();
   if (!targetStation) return JSON.stringify([]);

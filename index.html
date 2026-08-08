@@ -206,7 +206,7 @@
         <div id="firework-reason-box"></div>
 
         <div class="total-summary-box" onclick="testFireworks()">
-           <div class="total-label">TOTAL TODAY (ALL MODELS)</div>
+           <div class="total-label">TOTAL THIS SHIFT (ALL MODELS)</div>
            <div class="total-number" id="grand-total-display">0</div>
            <div class="grand-target-label" id="grand-eff-display">Shift Efficiency: 0%</div>
         </div>
@@ -299,7 +299,7 @@
       </div>
     </div>
     
-    <div class="version-tag">v17.16 (Buddhist Date Fix)</div>
+    <div class="version-tag">v17.17 (Shift Window 08-20)</div>
 
     <script>
       var delayTime = 3000;     
@@ -376,6 +376,45 @@
           }
       }
 
+      // คีย์กะปัจจุบัน: 08:00-20:00 หรือ 20:00-08:00
+      // ช่วง 00:00-07:59 เป็นกะกลางคืนของวันที่เริ่มกะเมื่อวาน
+      function getCurrentShiftKey(date) {
+          var d = new Date(date || new Date());
+          var hour = d.getHours();
+          var shiftStartHour = (hour >= 8 && hour < 20) ? 8 : 20;
+          if (hour < 8) d.setDate(d.getDate() - 1);
+
+          var yyyy = d.getFullYear();
+          var mm = String(d.getMonth() + 1).padStart(2, '0');
+          var dd = String(d.getDate()).padStart(2, '0');
+          return yyyy + '-' + mm + '-' + dd + '@' + String(shiftStartHour).padStart(2, '0');
+      }
+
+      function getShiftKeyFromLogTimestamp(value) {
+          var match = String(value || '').replace(',', '').match(/^(\d{1,2})[\/-](\d{1,2})[\/-](\d{4})\s+(\d{1,2})/);
+          if (!match) return getCurrentShiftKey();
+
+          var year = parseInt(match[3], 10);
+          if (year >= 2400) year -= 543;
+          var stamp = new Date(year, parseInt(match[2], 10) - 1, parseInt(match[1], 10), parseInt(match[4], 10), 0, 0);
+          return getCurrentShiftKey(stamp);
+      }
+
+      function checkShiftRollover() {
+          if (isDashboardMode || isTestMode) return;
+
+          var currentShiftKey = getCurrentShiftKey();
+          if (localStorage.getItem('prod_shift_key') === currentShiftKey) return;
+
+          productionHistory = {};
+          jobScanHistory = {};
+          localStorage.setItem('prod_shift_key', currentShiftKey);
+          localStorage.setItem('prod_history', JSON.stringify(productionHistory));
+          localStorage.setItem('job_scan_history', JSON.stringify(jobScanHistory));
+          updateUI();
+          hydrateFromSheet();
+      }
+
       if(localStorage.getItem('current_job')) currentJob = localStorage.getItem('current_job');
       if(localStorage.getItem('current_model')) currentModel = localStorage.getItem('current_model');
       
@@ -401,12 +440,12 @@
             fetchCloudData();
         }
 
-        var today = new Date().toDateString();
-        var lastDate = localStorage.getItem('prod_date');
-        if (lastDate !== today && !isDashboardMode) {
+        var currentShiftKey = getCurrentShiftKey();
+        var lastShiftKey = localStorage.getItem('prod_shift_key');
+        if (lastShiftKey !== currentShiftKey && !isDashboardMode) {
             productionHistory = {};
             jobScanHistory = {}; // ตัวนับสำรองรายวันของเครื่องนี้ (ยอดจริงของ Job อ่านจาก Sheet)
-            localStorage.setItem('prod_date', today);
+            localStorage.setItem('prod_shift_key', currentShiftKey);
             localStorage.setItem('prod_history', JSON.stringify(productionHistory));
             localStorage.setItem('job_scan_history', JSON.stringify(jobScanHistory));
         }
@@ -893,7 +932,7 @@
          localStorage.setItem('prod_history', JSON.stringify(productionHistory));
       }
 
-      // กู้ CURRENT MODEL COUNT, TOTAL TODAY และยอดรายชั่วโมงจาก Log ของ Line นี้
+      // กู้ CURRENT MODEL COUNT, TOTAL THIS SHIFT และยอดรายชั่วโมงจาก Log ของ Line นี้
       // localStorage ของ Apps Script อาจว่างเมื่อ deployment/sandbox origin เปลี่ยน
       function hydrateFromSheet() {
           if (isDashboardMode || !isGoogleScriptReady() || !currentStation) return;
@@ -917,7 +956,10 @@
                   });
 
                   // รายการที่สแกนระหว่างรอ Cloud ยังไม่อยู่ใน Log จึงต้องบวกกลับเข้าไป
+                  var activeShiftKey = getCurrentShiftKey();
                   pendingQueue.forEach(function(rec) {
+                      if (getShiftKeyFromLogTimestamp(rec[0]) !== activeShiftKey) return;
+
                       var model = String(rec[2] || "").trim();
                       if (!model) return;
 
@@ -932,7 +974,7 @@
                   });
 
                   productionHistory = hist;
-                  localStorage.setItem('prod_date', new Date().toDateString());
+                  localStorage.setItem('prod_shift_key', getCurrentShiftKey());
                   localStorage.setItem('prod_history', JSON.stringify(productionHistory));
                   updateUI();
               } catch (e) {
@@ -1341,7 +1383,10 @@
          }).saveBatchData(JSON.stringify(batchToSend));
       }
       function updateSyncStatus() { var el = document.getElementById('pending-count'); if(el) el.innerText = pendingQueue.length; }
-      function updateClock() { document.getElementById('clock-display').innerText = new Date().toLocaleTimeString('th-TH', {hour:'2-digit', minute:'2-digit'}); }
+      function updateClock() {
+         document.getElementById('clock-display').innerText = new Date().toLocaleTimeString('th-TH', {hour:'2-digit', minute:'2-digit'});
+         checkShiftRollover();
+      }
       function clearHistory() {
          var msg = isTestMode
             ? "ล้างยอดทดลองสแกน?\n(ข้อมูล Test Mode ไม่ได้ถูกบันทึกลง Sheet อยู่แล้ว)"
