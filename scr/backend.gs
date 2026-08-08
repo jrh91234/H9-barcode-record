@@ -324,6 +324,14 @@ function forceChangeModel(newModel, passwordInput) {
   }
 }
 
+// แปลงปี ค.ศ. หรือ พ.ศ. ให้เป็นปี พ.ศ. เดียวกัน
+// Google Sheets อาจส่งค่าวันที่เป็น Date object (ค.ศ.) หรือข้อความ (พ.ศ.)
+function normalizeThaiYear_(year) {
+  var n = parseInt(year, 10);
+  if (isNaN(n)) return NaN;
+  return n >= 2400 ? n : n + 543;
+}
+
 // อ่านแถว Log ของวันนี้ที่ยังไม่ VOID
 // คืน [{job, model, hour, station}] เพื่อใช้ทั้ง Dashboard และกู้หน้าจอหลัง refresh
 function readTodayLogRows_() {
@@ -342,7 +350,7 @@ function readTodayLogRows_() {
   var now = new Date();
   var todayDay   = now.getDate();
   var todayMonth = now.getMonth() + 1;
-  var todayYear  = now.getFullYear() + 543; // ปี พ.ศ.
+  var todayYear  = normalizeThaiYear_(now.getFullYear());
   var todayRows  = [];
 
   for (var i = 0; i < data.length; i++) {
@@ -352,7 +360,7 @@ function readTodayLogRows_() {
       var d = data[i][0];
       rowDay   = d.getDate();
       rowMonth = d.getMonth() + 1;
-      rowYear  = d.getFullYear() + 543;
+      rowYear  = normalizeThaiYear_(d.getFullYear());
       rowHour  = d.getHours().toString().padStart(2, '0');
     } else {
       var str      = String(data[i][0]);
@@ -361,7 +369,7 @@ function readTodayLogRows_() {
       var dp = datePart.split("/");
       rowDay   = parseInt(dp[0]);
       rowMonth = parseInt(dp[1]);
-      rowYear  = parseInt(dp[2]);
+      rowYear  = normalizeThaiYear_(dp[2]);
       rowHour  = (timePart ? timePart.split(":")[0] : "0").padStart(2, '0');
     }
 
