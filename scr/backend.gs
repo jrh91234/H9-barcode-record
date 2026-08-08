@@ -34,14 +34,14 @@ function doGet() {
 // CORE FUNCTIONS
 // ==========================================
 
-// 1. ดึงข้อมูล Database Offline
+// 1. ดึงข้อมูล Database Offline (Model, Barcode, Multiply)
 function getOfflineDatabase() {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var dbSheet = ss.getSheetByName(DB_SHEET_NAME);
   if (!dbSheet) return [];
   var lastRow = dbSheet.getLastRow();
   if (lastRow < 2) return [];
-  return dbSheet.getRange(2, 1, lastRow - 1, 2).getValues();
+  return dbSheet.getRange(2, 1, lastRow - 1, 3).getValues();
 }
 
 // 2. ดึงข้อมูล Capacity (Hourly/Daily Cap)
