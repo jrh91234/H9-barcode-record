@@ -299,7 +299,7 @@
       </div>
     </div>
     
-    <div class="version-tag">v17.13 (Cloud Job Count)</div>
+    <div class="version-tag">v17.14 (Sheet Multiply)</div>
 
     <script>
       var delayTime = 3000;     
@@ -309,15 +309,15 @@
       var jobCountInterval = 15000; // ดึงยอดสแกนสะสมของ Job Order จาก Sheet
       
       var localDB = {};
+      var barcodeMultiplierDB = {};
       var capDB = {};
       var jobDataMap = {};
 
-      // จำนวนที่นับต่อการสแกน 1 ครั้ง แยกตามรุ่น (เช่น รุ่นที่แพ็ค 5 ชิ้น/ถุง)
+      // จำนวนที่นับต่อการสแกน 1 ครั้ง อ่านจากคอลัมน์ Multiply ของบาร์โค้ดนั้น
       // สแกน 1 ครั้ง = นับ N ชิ้น ทั้งยอดหน้าจอ ยอด Job และแถวที่บันทึกลง Sheet
-      var scanMultipliers = { "R9HME106": 5 };
-      function getScanMultiplier(model) {
-          // บังคับให้เป็นจำนวนเต็มบวก เพื่อกันค่า config ที่เป็น string/ทศนิยม
-          var m = Math.round(Number(scanMultipliers[model]));
+      function getScanMultiplier(barcode) {
+          // บังคับให้เป็นจำนวนเต็มบวก; ช่องว่าง/ศูนย์/ค่าที่ไม่ใช่ตัวเลขให้นับเป็น 1
+          var m = Math.round(Number(barcodeMultiplierDB[barcode]));
           return (m && m > 0) ? m : 1;
       }
       
@@ -444,7 +444,12 @@
 
             google.script.run.withSuccessHandler(function(data) {
                if(data && data.length > 0) {
-                 data.forEach(function(row) { localDB[String(row[1]).trim()] = row[0]; });
+                 data.forEach(function(row) {
+                    var barcode = String(row[1]).trim();
+                    if (!barcode) return;
+                    localDB[barcode] = String(row[0]).trim();
+                    barcodeMultiplierDB[barcode] = row[2];
+                 });
                  document.getElementById('db-status').innerText = "OK (" + data.length + ")";
                  document.getElementById('db-status').style.color = "green";
                } else {
@@ -682,7 +687,7 @@
           try { playSuccessSound(); } catch(e){}
           updateStatusLight('OK');
 
-          var scanQty = getScanMultiplier(currentModel);
+          var scanQty = getScanMultiplier(barcode);
           saveToHistory(currentModel, scanQty);
           if (currentJob !== "MANUAL_MODE" && currentJob !== "N/A" && jobDataMap[currentJob]) {
               incrementJobScanCount(currentJob, scanQty);
