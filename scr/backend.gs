@@ -324,22 +324,26 @@ function forceChangeModel(newModel, passwordInput) {
   }
 }
 
-// ดึงข้อมูลการผลิตวันนี้
-function getTodayProductionData() {
+// อ่านแถว Log ของวันนี้ที่ยังไม่ VOID
+// คืน [{job, model, hour, station}] เพื่อใช้ทั้ง Dashboard และกู้หน้าจอหลัง refresh
+function readTodayLogRows_() {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var sheet = ss.getSheetByName(LOG_SHEET_NAME);
 
-  if (!sheet) return JSON.stringify([]);
+  if (!sheet) return [];
 
   var lastRow = sheet.getLastRow();
-  if (lastRow < 2) return JSON.stringify([]);
+  if (lastRow < 2) return [];
 
-  var data = sheet.getRange(2, 1, lastRow - 1, 5).getValues();
+  var numCols = Math.min(sheet.getLastColumn(), 6);
+  if (numCols < 5) return []; // ต้องมีอย่างน้อย Timestamp..Status
+
+  var data = sheet.getRange(2, 1, lastRow - 1, numCols).getValues();
   var now = new Date();
   var todayDay   = now.getDate();
   var todayMonth = now.getMonth() + 1;
   var todayYear  = now.getFullYear() + 543; // ปี พ.ศ.
-  var todayData  = [];
+  var todayRows  = [];
 
   for (var i = 0; i < data.length; i++) {
     var rowDay, rowMonth, rowYear, rowHour;
@@ -361,9 +365,38 @@ function getTodayProductionData() {
       rowHour  = (timePart ? timePart.split(":")[0] : "0").padStart(2, '0');
     }
 
-    if (rowDay === todayDay && rowMonth === todayMonth && rowYear === todayYear && String(data[i][4]).trim() !== "VOID") {
-      todayData.push({ model: data[i][2], hour: rowHour });
+    var model = String(data[i][2] || "").trim();
+    var status = String(data[i][4] || "").trim().toUpperCase();
+    if (rowDay === todayDay && rowMonth === todayMonth && rowYear === todayYear && status !== "VOID" && model !== "") {
+      todayRows.push({
+        job: String(data[i][1] || "").trim(),
+        model: model,
+        hour: rowHour,
+        station: numCols >= 6 ? String(data[i][5] || "").trim() : ""
+      });
     }
   }
+  return todayRows;
+}
+
+// ดึงข้อมูลการผลิตวันนี้ทุก Line (ใช้โดย Dashboard mode)
+function getTodayProductionData() {
+  var todayData = readTodayLogRows_().map(function(row) {
+    return { model: row.model, hour: row.hour };
+  });
   return JSON.stringify(todayData);
+}
+
+// ดึงข้อมูลการผลิตวันนี้เฉพาะ Line เพื่อกู้ยอดหน้าจอหลัง refresh/deploy
+function getTodayStationData(station) {
+  var targetStation = String(station || "").trim();
+  if (!targetStation) return JSON.stringify([]);
+
+  var stationData = readTodayLogRows_().filter(function(row) {
+    return row.station === targetStation;
+  }).map(function(row) {
+    return { model: row.model, hour: row.hour, job: row.job };
+  });
+
+  return JSON.stringify(stationData);
 }
