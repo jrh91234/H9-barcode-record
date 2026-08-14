@@ -26,7 +26,7 @@ var PLAN_SCAN_CACHE_SEC = 60;
 // ==========================================
 function doGet() {
   return HtmlService.createHtmlOutputFromFile('Index')
-      .setTitle('Scanner v17.17 Shift Window')
+      .setTitle('Scanner v17.18 Shift A/B')
       .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
 }
 
@@ -120,6 +120,35 @@ function getActiveJobOrders() {
   }
 }
 
+// ค่าที่อนุญาตสำหรับคอลัมน์ Shift เพื่อป้องกันข้อมูลสะกดไม่ตรงกันใน Log
+function normalizeShiftName_(value) {
+  var match = String(value || "").trim().toUpperCase().match(/^(?:SHIFT\s*)?([AB])$/);
+  return match ? "Shift " + match[1] : "";
+}
+
+// ค้นหาคอลัมน์ Shift จากหัวตาราง (คืนค่าเป็น index แบบเริ่มที่ 0)
+function getLogShiftColumn_(sheet) {
+  var lastCol = sheet.getLastColumn();
+  if (lastCol < 1) return -1;
+
+  var headers = sheet.getRange(1, 1, 1, lastCol).getValues()[0];
+  for (var i = 0; i < headers.length; i++) {
+    var header = String(headers[i] || "").trim().toLowerCase().replace(/\s+/g, " ");
+    if (header === "shift" || header === "shift name") return i;
+  }
+  return -1;
+}
+
+// เพิ่มหัวตาราง Shift ให้กับ Log เดิมโดยไม่กระทบคอลัมน์เก่า
+function ensureLogShiftColumn_(sheet) {
+  var existingColumn = getLogShiftColumn_(sheet);
+  if (existingColumn >= 0) return existingColumn + 1; // 1-based column number
+
+  var shiftColumn = Math.max(sheet.getLastColumn() + 1, 7);
+  sheet.getRange(1, shiftColumn).setValue("Shift");
+  return shiftColumn;
+}
+
 // 4. บันทึกข้อมูลลง Log
 function saveBatchData(jsonString) {
   try {
@@ -132,8 +161,24 @@ function saveBatchData(jsonString) {
     
     var lock = LockService.getScriptLock();
     if (lock.tryLock(10000)) {
+       var shiftColumn = ensureLogShiftColumn_(logSheet); // 1-based column number
+       var writeWidth = Math.max(shiftColumn, 6);
+       var rowsToWrite = dataArray.map(function(row) {
+         var output = [];
+         for (var col = 0; col < writeWidth; col++) output.push("");
+
+         // คอลัมน์เดิม A:F ยังคงรูปแบบเดิม: Timestamp, Job, Model, Barcode, Status, Station
+         for (var baseCol = 0; baseCol < Math.min(row.length, 6); baseCol++) {
+           output[baseCol] = row[baseCol];
+         }
+
+         // Client รุ่นใหม่ส่ง Shift มาในสมาชิกตัวที่ 7 (index 6)
+         output[shiftColumn - 1] = normalizeShiftName_(row.length > 6 ? row[6] : "");
+         return output;
+       });
+
        var lastRow = logSheet.getLastRow();
-       logSheet.getRange(lastRow + 1, 1, dataArray.length, dataArray[0].length).setValues(dataArray);
+       logSheet.getRange(lastRow + 1, 1, rowsToWrite.length, writeWidth).setValues(rowsToWrite);
        SpreadsheetApp.flush();
        lock.releaseLock();
        return "Saved " + dataArray.length;
@@ -392,7 +437,7 @@ function getShiftKey_(year, month, day, hour) {
 }
 
 // อ่านแถว Log ของกะปัจจุบันที่ยังไม่ VOID
-// คืน [{job, model, hour, station}] เพื่อใช้ทั้ง Dashboard และกู้หน้าจอหลัง refresh
+// คืน [{job, model, hour, station, shift}] เพื่อใช้ทั้ง Dashboard และกู้หน้าจอหลัง refresh
 function readTodayLogRows_() {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var sheet = ss.getSheetByName(LOG_SHEET_NAME);
@@ -402,7 +447,10 @@ function readTodayLogRows_() {
   var lastRow = sheet.getLastRow();
   if (lastRow < 2) return [];
 
-  var numCols = Math.min(sheet.getLastColumn(), 6);
+  var lastCol = sheet.getLastColumn();
+  var shiftColumnIndex = getLogShiftColumn_(sheet);
+  var numCols = Math.max(6, shiftColumnIndex + 1);
+  numCols = Math.min(lastCol, numCols);
   if (numCols < 5) return []; // ต้องมีอย่างน้อย Timestamp..Status
 
   var data = sheet.getRange(2, 1, lastRow - 1, numCols).getValues();
@@ -422,7 +470,8 @@ function readTodayLogRows_() {
         job: String(data[i][1] || "").trim(),
         model: model,
         hour: String(timestamp.hour).padStart(2, '0'),
-        station: numCols >= 6 ? String(data[i][5] || "").trim() : ""
+        station: numCols >= 6 ? String(data[i][5] || "").trim() : "",
+        shift: shiftColumnIndex >= 0 ? normalizeShiftName_(data[i][shiftColumnIndex]) : ""
       });
     }
   }
@@ -432,7 +481,7 @@ function readTodayLogRows_() {
 // ดึงข้อมูลการผลิตของกะปัจจุบันทุก Line (ใช้โดย Dashboard mode)
 function getTodayProductionData() {
   var shiftData = readTodayLogRows_().map(function(row) {
-    return { model: row.model, hour: row.hour };
+    return { model: row.model, hour: row.hour, shift: row.shift };
   });
   return JSON.stringify(shiftData);
 }
@@ -445,7 +494,7 @@ function getTodayStationData(station) {
   var stationData = readTodayLogRows_().filter(function(row) {
     return row.station === targetStation;
   }).map(function(row) {
-    return { model: row.model, hour: row.hour, job: row.job };
+    return { model: row.model, hour: row.hour, job: row.job, shift: row.shift };
   });
 
   return JSON.stringify(stationData);
