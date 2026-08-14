@@ -60,8 +60,12 @@
       .model-label { font-size: 10px; color: #888; text-transform: uppercase; }
       .model-name { font-size: 20px; font-weight: bold; color: #1565C0; margin: 0; line-height: 1.2; }
       .job-name { font-size: 16px; font-weight: bold; color: #E65100; margin: 0; line-height: 1.2; }
+      .shift-group { cursor: pointer; padding: 5px; border-radius: 5px; transition: 0.2s; }
+      .shift-group:hover { background-color: rgba(0,0,0,0.05); }
+      .shift-name { font-size: 18px; font-weight: bold; color: #6A1B9A; margin: 0; line-height: 1.2; }
 
       body.dashboard-mode .model-group { pointer-events: none; }
+      body.dashboard-mode .shift-group { pointer-events: none; }
       body.dashboard-mode #cam-btn { display: none; }
       body.dashboard-mode .clear-btn { display: none; }
       body.dashboard-mode #scan-trap { display: none; }
@@ -132,6 +136,9 @@
       .modal-box { background: white; padding: 30px; border-radius: 10px; width: 400px; text-align: center; box-shadow: 0 10px 30px rgba(0,0,0,0.5); }
       
       .modal-input { padding: 10px; font-size: 16px; width: 90%; margin: 15px 0; border: 1px solid #ccc; border-radius: 5px; background: #fff;}
+      .shift-choice-row { display: flex; justify-content: center; gap: 12px; margin: 20px 0; }
+      .shift-choice { flex: 1; min-width: 120px; padding: 16px 10px; border: 2px solid #ddd; border-radius: 8px; background: #fff; color: #555; cursor: pointer; font-size: 18px; font-weight: bold; }
+      .shift-choice:hover, .shift-choice.selected { border-color: #6A1B9A; background: #F3E5F5; color: #6A1B9A; }
       
       .btn { padding: 10px 20px; font-size: 18px; cursor: pointer; margin: 5px; border-radius: 5px; border:none;}
       .btn-primary { background: #1565C0; color: white; }
@@ -174,6 +181,10 @@
         <div class="model-group" style="margin-left: 20px;" onclick="openStationModal()">
            <div class="model-label">LINE ✎</div>
            <div class="job-name" id="current-station-display" style="color:#d32f2f;">⚠ ยังไม่ตั้งค่า</div>
+        </div>
+        <div class="shift-group" style="margin-left: 20px;" onclick="openShiftModal()" title="เลือก Shift">
+           <div class="model-label">SHIFT ✎</div>
+           <div class="shift-name" id="current-shift-display">Shift A</div>
         </div>
       </div>
       <div style="text-align:right; display:flex; align-items:center; gap:15px;">
@@ -260,6 +271,18 @@
       </div>
     </div>
 
+    <div class="modal-overlay" id="shiftModal">
+      <div class="modal-box">
+        <h3>เลือกกะการทำงาน (Shift)</h3>
+        <div style="font-size:13px; color:#666; margin-bottom:5px;">Shift ที่เลือกจะถูกบันทึกลงใน Log ของทุกการสแกน</div>
+        <div class="shift-choice-row">
+          <button class="shift-choice" id="shift-choice-A" onclick="saveShiftSelection('A')">Shift A<br><span style="font-size:12px; font-weight:normal;">08:00–20:00</span></button>
+          <button class="shift-choice" id="shift-choice-B" onclick="saveShiftSelection('B')">Shift B<br><span style="font-size:12px; font-weight:normal;">20:00–08:00</span></button>
+        </div>
+        <button class="btn" onclick="closeShiftModal()">Cancel</button>
+      </div>
+    </div>
+
     <div class="modal-overlay" id="jobCompleteModal">
       <div class="modal-box">
         <h2 style="color:#d32f2f;">⚠ Job Order ครบจำนวนแล้ว!</h2>
@@ -299,7 +322,7 @@
       </div>
     </div>
     
-    <div class="version-tag">v17.17 (Shift Window 08-20)</div>
+    <div class="version-tag">v17.18 (Shift A/B)</div>
 
     <script>
       var delayTime = 3000;     
@@ -324,6 +347,7 @@
       var pendingQueue = [];    
       var currentModel = "";
       var currentJob = "N/A";   
+      var currentShift = "";
       var lastScanTime = 0;
       var totalCurrentModel = 0; 
       var productionHistory = JSON.parse(localStorage.getItem('prod_history')) || {};
@@ -390,6 +414,60 @@
           return yyyy + '-' + mm + '-' + dd + '@' + String(shiftStartHour).padStart(2, '0');
       }
 
+      function normalizeShiftCode(value) {
+          var match = String(value || '').trim().toUpperCase().match(/^(?:SHIFT\s*)?([AB])$/);
+          return match ? match[1] : '';
+      }
+
+      function getDefaultShiftCode(date) {
+          var hour = new Date(date || new Date()).getHours();
+          return (hour >= 8 && hour < 20) ? 'A' : 'B';
+      }
+
+      function getShiftLabel(code) {
+          return 'Shift ' + (normalizeShiftCode(code) || getDefaultShiftCode());
+      }
+
+      function initializeShiftSelection() {
+          var currentWindowKey = getCurrentShiftKey();
+          var savedShift = normalizeShiftCode(localStorage.getItem('current_shift'));
+          var savedWindowKey = localStorage.getItem('current_shift_window_key');
+          currentShift = (savedShift && savedWindowKey === currentWindowKey)
+              ? savedShift
+              : getDefaultShiftCode();
+          localStorage.setItem('current_shift', currentShift);
+          localStorage.setItem('current_shift_window_key', currentWindowKey);
+      }
+
+      function updateShiftDisplay() {
+          var el = document.getElementById('current-shift-display');
+          if (el) el.innerText = getShiftLabel(currentShift);
+      }
+
+      function openShiftModal() {
+          if (isDashboardMode) return;
+          document.getElementById('shift-choice-A').classList.toggle('selected', currentShift === 'A');
+          document.getElementById('shift-choice-B').classList.toggle('selected', currentShift === 'B');
+          document.getElementById('shiftModal').style.display = 'flex';
+      }
+
+      function closeShiftModal() {
+          document.getElementById('shiftModal').style.display = 'none';
+          refocusTrap();
+      }
+
+      function saveShiftSelection(code) {
+          var normalized = normalizeShiftCode(code);
+          if (!normalized) return;
+          currentShift = normalized;
+          localStorage.setItem('current_shift', currentShift);
+          localStorage.setItem('current_shift_window_key', getCurrentShiftKey());
+          updateShiftDisplay();
+          closeShiftModal();
+      }
+
+      initializeShiftSelection();
+
       function getShiftKeyFromLogTimestamp(value) {
           var match = String(value || '').replace(',', '').match(/^(\d{1,2})[\/-](\d{1,2})[\/-](\d{4})\s+(\d{1,2})/);
           if (!match) return getCurrentShiftKey();
@@ -405,6 +483,9 @@
 
           var currentShiftKey = getCurrentShiftKey();
           if (localStorage.getItem('prod_shift_key') === currentShiftKey) return;
+
+          initializeShiftSelection();
+          updateShiftDisplay();
 
           productionHistory = {};
           jobScanHistory = {};
@@ -452,6 +533,7 @@
 
         updateJobDisplay();
         updateStationDisplay();
+        updateShiftDisplay();
         updateClock(); setInterval(updateClock, 1000);
 
         if(!isDashboardMode) {
@@ -607,7 +689,8 @@
           var modal4 = document.getElementById('stationModal').style.display === 'flex';
           var modal5 = document.getElementById('jobCompleteModal').style.display === 'flex';
           var modal6 = document.getElementById('editJobCountModal').style.display === 'flex';
-          if (!modal1 && !modal2 && !modal3 && !modal4 && !modal5 && !modal6) document.getElementById('scan-trap').focus();
+          var modal7 = document.getElementById('shiftModal').style.display === 'flex';
+          if (!modal1 && !modal2 && !modal3 && !modal4 && !modal5 && !modal6 && !modal7) document.getElementById('scan-trap').focus();
       }
       setInterval(refocusTrap, 1000);
 
@@ -644,6 +727,7 @@
           if (document.getElementById('stationModal').style.display === 'flex') return;
           if (document.getElementById('jobCompleteModal').style.display === 'flex') return;
           if (document.getElementById('editJobCountModal').style.display === 'flex') return;
+          if (document.getElementById('shiftModal').style.display === 'flex') return;
 
           if (e.key === 'Tab' || e.key === 'Enter') { e.preventDefault(); }
           var char = thaiMap[e.key] || e.key;
@@ -738,7 +822,7 @@
           if (!isTestMode) {
             var dateStr = new Date().toLocaleString('th-TH');
             for (var q = 0; q < scanQty; q++) {
-                pendingQueue.push([dateStr, currentJob, currentModel, barcode, "OK", currentStation || "Unknown"]);
+                pendingQueue.push([dateStr, currentJob, currentModel, barcode, "OK", currentStation || "Unknown", getShiftLabel(currentShift)]);
             }
           }
           updateSyncStatus();
