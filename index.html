@@ -273,11 +273,11 @@
 
     <div class="modal-overlay" id="shiftModal">
       <div class="modal-box">
-        <h3>เลือกกะการทำงาน (Shift)</h3>
-        <div style="font-size:13px; color:#666; margin-bottom:5px;">Shift ที่เลือกจะถูกบันทึกลงใน Log ของทุกการสแกน</div>
+        <h3>เลือกชื่อกะการทำงาน (Shift)</h3>
+        <div style="font-size:13px; color:#666; margin-bottom:5px;">ชื่อ Shift ที่เลือกจะถูกบันทึกลงใน Log ของทุกการสแกน</div>
         <div class="shift-choice-row">
-          <button class="shift-choice" id="shift-choice-A" onclick="saveShiftSelection('A')">Shift A<br><span style="font-size:12px; font-weight:normal;">08:00–20:00</span></button>
-          <button class="shift-choice" id="shift-choice-B" onclick="saveShiftSelection('B')">Shift B<br><span style="font-size:12px; font-weight:normal;">20:00–08:00</span></button>
+          <button class="shift-choice" id="shift-choice-A" onclick="saveShiftSelection('A')">Shift A</button>
+          <button class="shift-choice" id="shift-choice-B" onclick="saveShiftSelection('B')">Shift B</button>
         </div>
         <button class="btn" onclick="closeShiftModal()">Cancel</button>
       </div>
@@ -322,7 +322,7 @@
       </div>
     </div>
     
-    <div class="version-tag">v17.18 (Shift A/B)</div>
+    <div class="version-tag">v17.19 (Shift Name A/B)</div>
 
     <script>
       var delayTime = 3000;     
@@ -400,8 +400,8 @@
           }
       }
 
-      // คีย์กะปัจจุบัน: 08:00-20:00 หรือ 20:00-08:00
-      // ช่วง 00:00-07:59 เป็นกะกลางคืนของวันที่เริ่มกะเมื่อวาน
+      // คีย์รอบเวลาสรุปปัจจุบัน: 08:00-20:00 หรือ 20:00-08:00
+      // ชื่อ Shift A/B เป็น label อิสระ ไม่ได้ผูกกับช่วงเวลา
       function getCurrentShiftKey(date) {
           var d = new Date(date || new Date());
           var hour = d.getHours();
@@ -419,9 +419,8 @@
           return match ? match[1] : '';
       }
 
-      function getDefaultShiftCode(date) {
-          var hour = new Date(date || new Date()).getHours();
-          return (hour >= 8 && hour < 20) ? 'A' : 'B';
+      function getDefaultShiftCode() {
+          return 'A';
       }
 
       function getShiftLabel(code) {
@@ -429,14 +428,9 @@
       }
 
       function initializeShiftSelection() {
-          var currentWindowKey = getCurrentShiftKey();
           var savedShift = normalizeShiftCode(localStorage.getItem('current_shift'));
-          var savedWindowKey = localStorage.getItem('current_shift_window_key');
-          currentShift = (savedShift && savedWindowKey === currentWindowKey)
-              ? savedShift
-              : getDefaultShiftCode();
+          currentShift = savedShift || getDefaultShiftCode();
           localStorage.setItem('current_shift', currentShift);
-          localStorage.setItem('current_shift_window_key', currentWindowKey);
       }
 
       function updateShiftDisplay() {
@@ -461,7 +455,6 @@
           if (!normalized) return;
           currentShift = normalized;
           localStorage.setItem('current_shift', currentShift);
-          localStorage.setItem('current_shift_window_key', getCurrentShiftKey());
           updateShiftDisplay();
           closeShiftModal();
       }
@@ -483,9 +476,6 @@
 
           var currentShiftKey = getCurrentShiftKey();
           if (localStorage.getItem('prod_shift_key') === currentShiftKey) return;
-
-          initializeShiftSelection();
-          updateShiftDisplay();
 
           productionHistory = {};
           jobScanHistory = {};

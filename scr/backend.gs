@@ -26,7 +26,7 @@ var PLAN_SCAN_CACHE_SEC = 60;
 // ==========================================
 function doGet() {
   return HtmlService.createHtmlOutputFromFile('Index')
-      .setTitle('Scanner v17.18 Shift A/B')
+      .setTitle('Scanner v17.19 Shift Name A/B')
       .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
 }
 
@@ -419,7 +419,7 @@ function parseLogTimestamp_(value) {
   };
 }
 
-// คืนคีย์ของกะ: 08:00-20:00 หรือ 20:00-08:00
+// คืนคีย์รอบเวลาสำหรับสรุปข้อมูล: 08:00-20:00 หรือ 20:00-08:00
 // เวลา 00:00-07:59 จะใช้วันที่เริ่มกะของวันก่อนหน้า
 function getShiftKey_(year, month, day, hour) {
   var gregorianYear = toGregorianYear_(year);
