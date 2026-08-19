@@ -355,6 +355,20 @@
           return String(code).trim().replace(/^0+(?=\d)/, '');
       }
 
+      // ID เฉพาะของการสแกน 1 ครั้ง (ไม่ใช่ 1 แถว) ใช้ผูกแถว Log หลายแถวที่เกิดจาก
+      // scanQty > 1 ให้รู้ว่ามาจากการสแกนครั้งเดียวกัน
+      function generateScanGroupId() {
+          if (window.crypto && typeof window.crypto.randomUUID === 'function') {
+              return window.crypto.randomUUID();
+          }
+          // fallback สำหรับเบราว์เซอร์/WebView รุ่นเก่าที่ไม่มี crypto.randomUUID
+          return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function (c) {
+              var r = Math.random() * 16 | 0;
+              var v = c === 'x' ? r : (r & 0x3 | 0x8);
+              return v.toString(16);
+          });
+      }
+
       // จำนวนที่นับต่อการสแกน 1 ครั้ง อ่านจากคอลัมน์ Multiply ของบาร์โค้ดนั้น
       // สแกน 1 ครั้ง = นับ N ชิ้น ทั้งยอดหน้าจอ ยอด Job และแถวที่บันทึกลง Sheet
       function getScanMultiplier(barcode) {
@@ -869,8 +883,12 @@
           }
           if (!isTestMode) {
             var dateStr = new Date().toLocaleString('th-TH');
+            // scanQty > 1 มาจากบาร์โค้ดเดียวที่สแกนครั้งเดียว (Multiply) จึงเขียนหลายแถวที่มี
+            // barcode+เวลาเหมือนกันเป๊ะโดยตั้งใจ — ให้ ScanGroupID เดียวกันทุกแถวในชุดนี้ เพื่อให้
+            // ระบบอื่น (เช่น Job order tracking) แยกออกจากการสแกนซ้ำที่ไม่ตั้งใจได้ โดยไม่ต้องเดา
+            var scanGroupId = generateScanGroupId();
             for (var q = 0; q < scanQty; q++) {
-                pendingQueue.push([dateStr, currentJob, currentModel, barcode, "OK", currentStation || "Unknown", getShiftLabel(currentShift)]);
+                pendingQueue.push([dateStr, currentJob, currentModel, barcode, "OK", currentStation || "Unknown", getShiftLabel(currentShift), scanGroupId]);
             }
           }
           updateSyncStatus();

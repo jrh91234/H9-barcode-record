@@ -139,6 +139,22 @@ function getLogShiftColumn_(sheet) {
   return -1;
 }
 
+// ค้นหาคอลัมน์ ScanGroupID จากหัวตาราง (คืนค่าเป็น index แบบเริ่มที่ 0)
+// คอลัมน์นี้ผูกแถว Log หลายแถวที่เกิดจากการสแกน 1 ครั้งแต่ต้องนับหลายชิ้น (Multiply)
+// ให้ระบบอื่น (เช่น Job order tracking) แยกออกจากการสแกนซ้ำที่ไม่ตั้งใจได้ ไม่ต้องเดาจาก
+// บาร์โค้ด+เวลาเหมือนที่ผ่านมา
+function getLogScanGroupColumn_(sheet) {
+  var lastCol = sheet.getLastColumn();
+  if (lastCol < 1) return -1;
+
+  var headers = sheet.getRange(1, 1, 1, lastCol).getValues()[0];
+  for (var i = 0; i < headers.length; i++) {
+    var header = String(headers[i] || "").trim().toLowerCase().replace(/\s+/g, " ");
+    if (header === "scangroupid" || header === "scan group id" || header === "scan id") return i;
+  }
+  return -1;
+}
+
 // เพิ่มหัวตาราง Shift ให้กับ Log เดิมโดยไม่กระทบคอลัมน์เก่า
 function ensureLogShiftColumn_(sheet) {
   var existingColumn = getLogShiftColumn_(sheet);
@@ -147,6 +163,16 @@ function ensureLogShiftColumn_(sheet) {
   var shiftColumn = Math.max(sheet.getLastColumn() + 1, 7);
   sheet.getRange(1, shiftColumn).setValue("Shift");
   return shiftColumn;
+}
+
+// เพิ่มหัวตาราง ScanGroupID ให้กับ Log เดิมโดยไม่กระทบคอลัมน์เก่า
+function ensureLogScanGroupColumn_(sheet) {
+  var existingColumn = getLogScanGroupColumn_(sheet);
+  if (existingColumn >= 0) return existingColumn + 1; // 1-based column number
+
+  var scanGroupColumn = Math.max(sheet.getLastColumn() + 1, 8);
+  sheet.getRange(1, scanGroupColumn).setValue("ScanGroupID");
+  return scanGroupColumn;
 }
 
 // 4. บันทึกข้อมูลลง Log
@@ -162,7 +188,8 @@ function saveBatchData(jsonString) {
     var lock = LockService.getScriptLock();
     if (lock.tryLock(10000)) {
        var shiftColumn = ensureLogShiftColumn_(logSheet); // 1-based column number
-       var writeWidth = Math.max(shiftColumn, 6);
+       var scanGroupColumn = ensureLogScanGroupColumn_(logSheet); // 1-based column number
+       var writeWidth = Math.max(shiftColumn, scanGroupColumn, 6);
        var rowsToWrite = dataArray.map(function(row) {
          var output = [];
          for (var col = 0; col < writeWidth; col++) output.push("");
@@ -174,6 +201,8 @@ function saveBatchData(jsonString) {
 
          // Client รุ่นใหม่ส่ง Shift มาในสมาชิกตัวที่ 7 (index 6)
          output[shiftColumn - 1] = normalizeShiftName_(row.length > 6 ? row[6] : "");
+         // Client รุ่นใหม่ส่ง ScanGroupID มาในสมาชิกตัวที่ 8 (index 7)
+         output[scanGroupColumn - 1] = row.length > 7 ? String(row[7] || "").trim() : "";
          return output;
        });
 
