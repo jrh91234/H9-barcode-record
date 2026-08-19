@@ -284,6 +284,7 @@
       <div class="modal-box">
         <h3>เลือกชื่อกะการทำงาน (Shift)</h3>
         <div style="font-size:13px; color:#666; margin-bottom:5px;">ชื่อ Shift ที่เลือกจะถูกบันทึกลงใน Log ของทุกการสแกน</div>
+        <div id="shift-rotation-banner" style="display:none; background:#FFF3E0; border:2px solid #FF9800; border-radius:8px; padding:12px; margin-bottom:12px; font-size:15px; text-align:left;"></div>
         <div class="shift-choice-row">
           <button class="shift-choice" id="shift-choice-A" onclick="saveShiftSelection('A')">Shift A</button>
           <button class="shift-choice" id="shift-choice-B" onclick="saveShiftSelection('B')">Shift B</button>
@@ -352,6 +353,20 @@
       // แค่จำนวนเลข 0 นำหน้า)
       function normalizeBarcode(code) {
           return String(code).trim().replace(/^0+(?=\d)/, '');
+      }
+
+      // ID เฉพาะของการสแกน 1 ครั้ง (ไม่ใช่ 1 แถว) ใช้ผูกแถว Log หลายแถวที่เกิดจาก
+      // scanQty > 1 ให้รู้ว่ามาจากการสแกนครั้งเดียวกัน
+      function generateScanGroupId() {
+          if (window.crypto && typeof window.crypto.randomUUID === 'function') {
+              return window.crypto.randomUUID();
+          }
+          // fallback สำหรับเบราว์เซอร์/WebView รุ่นเก่าที่ไม่มี crypto.randomUUID
+          return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function (c) {
+              var r = Math.random() * 16 | 0;
+              var v = c === 'x' ? r : (r & 0x3 | 0x8);
+              return v.toString(16);
+          });
       }
 
       // จำนวนที่นับต่อการสแกน 1 ครั้ง อ่านจากคอลัมน์ Multiply ของบาร์โค้ดนั้น
@@ -456,11 +471,46 @@
           if (el) el.innerText = getShiftLabel(currentShift);
       }
 
-      function openShiftModal() {
+      function openShiftModal(isRotationDue) {
           if (isDashboardMode) return;
           document.getElementById('shift-choice-A').classList.toggle('selected', currentShift === 'A');
           document.getElementById('shift-choice-B').classList.toggle('selected', currentShift === 'B');
+
+          var banner = document.getElementById('shift-rotation-banner');
+          if (isRotationDue) {
+              var suggested = currentShift === 'A' ? 'B' : 'A';
+              banner.innerHTML = '📅 <b>ถึงกำหนดเปลี่ยนกะแล้ว!</b><br>กะก่อนหน้า: <b>Shift ' + currentShift + '</b> — ' +
+                  'กะต่อไปคือ <b style="color:#6A1B9A">Shift ' + suggested + '</b> ใช่หรือไม่? (หรือเลือก Shift ' + currentShift + ' อีกครั้งถ้ายังทำกะเดิมต่อ)';
+              banner.style.display = 'block';
+          } else {
+              banner.style.display = 'none';
+          }
+
           document.getElementById('shiftModal').style.display = 'flex';
+      }
+
+      // รอบเปลี่ยนกะ A/B ทุก 2 อาทิตย์ วันจันทร์ ยึดปฏิทินคงที่จาก anchor ด้านล่าง
+      // (ไม่ขยับตามว่าจะมีคนตอบหรือไม่ — ถึงกำหนดก็เด้งเตือนครั้งเดียว แล้วเงียบไปจนครบรอบถัดไป)
+      var SHIFT_ROTATION_ANCHOR = '2026-08-24'; // วันจันทร์ที่ยืนยันว่าเป็นวันเปลี่ยนกะจริง
+
+      function isShiftRotationDueOn(date) {
+          var anchor = new Date(SHIFT_ROTATION_ANCHOR + 'T00:00:00');
+          var d = new Date(date);
+          d.setHours(0, 0, 0, 0);
+          var diffDays = Math.round((d - anchor) / 86400000);
+          return diffDays >= 0 && (diffDays % 14) === 0;
+      }
+
+      function checkShiftRotationPrompt() {
+          if (isDashboardMode) return;
+          var now = new Date();
+          if (!isShiftRotationDueOn(now)) return;
+
+          var todayStr = now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0') + '-' + String(now.getDate()).padStart(2, '0');
+          if (localStorage.getItem('shift_rotation_prompted_date') === todayStr) return; // เด้งแล้ววันนี้ ไม่เด้งซ้ำ
+
+          localStorage.setItem('shift_rotation_prompted_date', todayStr);
+          openShiftModal(true);
       }
 
       function closeShiftModal() {
@@ -550,8 +600,11 @@
 
         if(!isDashboardMode && !currentStation) {
             openStationModal();
+        } else if (!isDashboardMode) {
+            checkShiftRotationPrompt(); // ยังไม่เช็คถ้าต้องบังคับตั้งค่าเครื่องก่อน กันโมดัลซ้อนกัน
         }
-        
+        setInterval(checkShiftRotationPrompt, 60 * 60 * 1000); // เผื่อเครื่องเปิดค้างข้ามวันที่ครบกำหนด
+
         setInterval(syncConfig, configInterval);
         setInterval(fetchJobScanCounts, jobCountInterval);
         fetchJobScanCounts();
@@ -830,8 +883,12 @@
           }
           if (!isTestMode) {
             var dateStr = new Date().toLocaleString('th-TH');
+            // scanQty > 1 มาจากบาร์โค้ดเดียวที่สแกนครั้งเดียว (Multiply) จึงเขียนหลายแถวที่มี
+            // barcode+เวลาเหมือนกันเป๊ะโดยตั้งใจ — ให้ ScanGroupID เดียวกันทุกแถวในชุดนี้ เพื่อให้
+            // ระบบอื่น (เช่น Job order tracking) แยกออกจากการสแกนซ้ำที่ไม่ตั้งใจได้ โดยไม่ต้องเดา
+            var scanGroupId = generateScanGroupId();
             for (var q = 0; q < scanQty; q++) {
-                pendingQueue.push([dateStr, currentJob, currentModel, barcode, "OK", currentStation || "Unknown", getShiftLabel(currentShift)]);
+                pendingQueue.push([dateStr, currentJob, currentModel, barcode, "OK", currentStation || "Unknown", getShiftLabel(currentShift), scanGroupId]);
             }
           }
           updateSyncStatus();
