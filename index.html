@@ -345,6 +345,15 @@
       var capDB = {};
       var jobDataMap = {};
 
+      // บาร์โค้ดจริงบางตัวขึ้นต้นด้วย 0 (เช่นรหัส GS1/UPC) แต่ถ้าคอลัมน์ Barcode ใน Sheet
+      // ถูกเก็บเป็นชนิดตัวเลข Google Sheets จะตัดเลข 0 นำหน้าทิ้งเงียบๆ ทำให้เทียบกับที่สแกน
+      // ได้จริงไม่ตรงกัน ตัดเลข 0 นำหน้าออกทั้งสองฝั่งก่อนเทียบ กันปัญหานี้โดยไม่ต้องพึ่ง
+      // format ของ Sheet (ไม่กระทบการเทียบบาร์โค้ดปกติ เพราะบาร์โค้ดจริงไม่มีสองรหัสที่ต่างกัน
+      // แค่จำนวนเลข 0 นำหน้า)
+      function normalizeBarcode(code) {
+          return String(code).trim().replace(/^0+(?=\d)/, '');
+      }
+
       // จำนวนที่นับต่อการสแกน 1 ครั้ง อ่านจากคอลัมน์ Multiply ของบาร์โค้ดนั้น
       // สแกน 1 ครั้ง = นับ N ชิ้น ทั้งยอดหน้าจอ ยอด Job และแถวที่บันทึกลง Sheet
       function getScanMultiplier(barcode) {
@@ -568,7 +577,7 @@
             google.script.run.withSuccessHandler(function(data) {
                if(data && data.length > 0) {
                  data.forEach(function(row) {
-                    var barcode = String(row[1]).trim();
+                    var barcode = normalizeBarcode(row[1]);
                     if (!barcode) return;
                     localDB[barcode] = String(row[0]).trim();
                     barcodeMultiplierDB[barcode] = row[2];
@@ -753,7 +762,8 @@
              return; 
           }
 
-          var foundModel = localDB[barcode];
+          var lookupKey = normalizeBarcode(barcode);
+          var foundModel = localDB[lookupKey];
           if (!foundModel) {
               display.innerText = "NF: " + barcode; display.style.color = "orange";
               try { playErrorSound(); } catch(e){}
@@ -812,7 +822,7 @@
           try { playSuccessSound(); } catch(e){}
           updateStatusLight('OK');
 
-          var scanQty = getScanMultiplier(barcode);
+          var scanQty = getScanMultiplier(lookupKey);
           saveToHistory(currentModel, scanQty);
           if (currentJob !== "MANUAL_MODE" && currentJob !== "N/A" && jobDataMap[currentJob]) {
               incrementJobScanCount(currentJob, scanQty);
