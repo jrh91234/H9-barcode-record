@@ -995,15 +995,22 @@
 
       function openEditJobCountModal() {
           if (isDashboardMode) return;
-          if (currentJob === "MANUAL_MODE" || currentJob === "N/A" || !jobDataMap[currentJob]) {
-              alert("ฟีเจอร์นี้ใช้ได้เฉพาะตอนเลือก Job Order ที่มีแผนจำนวนแล้วเท่านั้น");
+          if (currentJob === "MANUAL_MODE" || currentJob === "N/A") {
+              alert("ฟีเจอร์นี้ใช้ไม่ได้ตอน Manual Mode หรือยังไม่ได้เลือก Job Order");
               return;
           }
-          var planQty = parseInt(jobDataMap[currentJob].qty) || 0;
+          // jobDataMap มีเฉพาะ Job ที่ยัง "ไม่เสร็จ" เท่านั้น (ดู getActiveJobOrders ฝั่ง backend)
+          // Job ที่เพิ่งปิดงานไป (เช่นสแกนเกิน Plan จนปิดเองอัตโนมัติ) จะหายไปจาก jobDataMap
+          // แต่การ Void ยังต้องใช้ได้อยู่ เพราะนี่คือสถานการณ์หลักที่ต้องมาแก้ยอดเกิน จึงไม่บังคับ
+          // ให้ต้องมีข้อมูล Plan ครบก่อน แค่ไม่มีให้แสดงเป็น N/A แทน
+          var jobInfo = jobDataMap[currentJob];
           var scanned = getJobScannedCount(currentJob);
           var scannedLabel = isJobCountFromCloud() ? "สแกนแล้ว (ทุกเครื่อง)" : "สแกนแล้ว (เครื่องนี้)";
+          var planLine = jobInfo
+              ? `Plan: <b>${parseInt(jobInfo.qty) || 0}</b><br>`
+              : `Plan: <b>N/A</b> (ไม่พบใน Job ที่ยังไม่เสร็จ — อาจปิดงานไปแล้ว)<br>`;
           document.getElementById('edit-job-count-info').innerHTML =
-              `Job: <b>${currentJob}</b><br>Plan: <b>${planQty}</b><br>${scannedLabel}: <b>${scanned}</b>`;
+              `Job: <b>${currentJob}</b><br>${planLine}${scannedLabel}: <b>${scanned}</b>`;
           document.getElementById('edit-job-count-input').value = "";
           document.getElementById('edit-job-count-admin-pass').value = "";
           document.getElementById('editJobCountModal').style.display = 'flex';
