@@ -85,14 +85,20 @@ function getActiveJobOrders() {
     var lastRow = sheet.getLastRow();
     if (lastRow < 2) return [];
 
-    // Job Order = Col D (Index 3), Model = Col G (Index 6), Incomplete = header "Actual complete date" is blank
+    // Job Order = Col D (Index 3), Model = Col G (Index 6)
+    // ตัดออกจากลิสต์เมื่อ: header "Actual complete date" มีวันที่จริง หรือ header "Status" = Closed
     var lastCol = Math.max(sheet.getLastColumn(), 11);
     var headers = sheet.getRange(1, 1, 1, lastCol).getValues()[0];
     var actualCompleteDateColIndex = -1; // -1 = not found
+    var statusColIndex = -1; // -1 = not found
 
     headers.forEach(function(header, index) {
-      if (String(header).trim().toLowerCase() === "actual complete date") {
+      var headerName = String(header).trim().toLowerCase();
+      if (headerName === "actual complete date") {
         actualCompleteDateColIndex = index;
+      }
+      if (headerName === "status") {
+        statusColIndex = index;
       }
     });
 
@@ -109,6 +115,12 @@ function getActiveJobOrders() {
       if (actualCompleteDateColIndex >= 0) {
         var actualCompleteDate = String(row[actualCompleteDateColIndex]).trim().toLowerCase();
         if (actualCompleteDate !== "" && actualCompleteDate !== "incomplete") return;
+      }
+
+      // งานที่หลังบ้านปิดแล้ว (Status = Closed) ไม่ต้องแสดงใน dropdown ให้เลือกสแกนอีก
+      if (statusColIndex >= 0) {
+        var jobStatus = String(row[statusColIndex]).trim().toLowerCase();
+        if (jobStatus === "closed") return;
       }
 
       activeJobs.push({ job: jobOrder, model: orderModel, qty: planQty });
