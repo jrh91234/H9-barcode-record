@@ -1,0 +1,127 @@
+name: Deploy to Apps Script
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'index.html'
+      - 'scr/**'
+      - 'appsscript.json'
+      - '.github/workflows/deploy-apps-script.yml'
+  workflow_dispatch:
+    inputs:
+      reason:
+        description: 'เหตุผลที่ deploy ด้วยมือ (แสดงใน description ของ deployment)'
+        required: false
+        default: 'manual deploy'
+
+# กัน deploy ซ้อนกัน: ถ้ามี run ค้างอยู่ให้ต่อคิว ไม่ยกเลิก เพราะแต่ละ run เขียนทับ project จริง
+concurrency:
+  group: apps-script-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: ตรวจว่ามี secret ครบ
+        env:
+          CLASPRC_JSON: ${{ secrets.CLASPRC_JSON }}
+          APPS_SCRIPT_ID: ${{ secrets.APPS_SCRIPT_ID }}
+        run: |
+          missing=""
+          if [ -z "$CLASPRC_JSON" ]; then missing="$missing CLASPRC_JSON"; fi
+          if [ -z "$APPS_SCRIPT_ID" ]; then missing="$missing APPS_SCRIPT_ID"; fi
+          if [ -n "$missing" ]; then
+            echo "::error::ยังไม่ได้ตั้ง repository secret:$missing (ดูวิธีตั้งที่ docs/DEPLOY.md)"
+            exit 1
+          fi
+
+      - name: ติดตั้ง clasp
+        run: npm install -g @google/clasp@2.4.2
+
+      - name: เขียน credential ของ Google
+        env:
+          CLASPRC_JSON: ${{ secrets.CLASPRC_JSON }}
+        run: |
+          printf '%s' "$CLASPRC_JSON" > "$HOME/.clasprc.json"
+          chmod 600 "$HOME/.clasprc.json"
+          # ตรวจรูปแบบไฟล์ก่อน เพื่อให้ error ชัดกว่ารอ clasp ฟ้องทีหลัง
+          node -e "const c=require(process.env.HOME+'/.clasprc.json'); if(!c.token||!c.token.refresh_token){console.error('CLASPRC_JSON ไม่มี token.refresh_token — คัดลอกไฟล์ ~/.clasprc.json มาไม่ครบ');process.exit(1)}"
+
+      - name: ดึงโค้ดปัจจุบันจาก Apps Script มาเก็บเป็น backup
+        env:
+          APPS_SCRIPT_ID: ${{ secrets.APPS_SCRIPT_ID }}
+        run: |
+          mkdir -p remote
+          printf '{"scriptId":"%s","rootDir":"remote"}\n' "$APPS_SCRIPT_ID" > .clasp.json
+          # ถ้าดึงไม่ได้ก็ไม่ให้ล้ม จะใช้ appsscript.json ในรีโปแทนในขั้นถัดไป
+          clasp pull || echo "::warning::clasp pull ไม่สำเร็จ — จะใช้ appsscript.json ในรีโปแทน"
+          ls -la remote || true
+
+      - name: เก็บ backup เป็น artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: apps-script-backup-${{ github.sha }}
+          path: remote/
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: เตรียมไฟล์ที่จะ push
+        run: |
+          set -e
+          mkdir -p build
+          # ชื่อไฟล์ต้องเป็น "Index" ตัว I ใหญ่ เพราะ doGet() เรียก createHtmlOutputFromFile('Index')
+          cp index.html build/Index.html
+          cp scr/backend.gs build/backend.gs
+
+          # ใช้ manifest ของ project จริงเป็นฐาน เพื่อไม่ให้ timezone / runtime / oauthScopes
+          # ที่ตั้งไว้แล้วหายไป แล้วค่อยบังคับเฉพาะส่วน webapp ให้เป็น "ทุกคนเข้าถึงได้"
+          if [ -f remote/appsscript.json ]; then
+            base=remote/appsscript.json
+            echo "ใช้ manifest จาก Apps Script project เป็นฐาน"
+          else
+            base=appsscript.json
+            echo "::warning::ไม่พบ manifest จาก project — ใช้ appsscript.json ในรีโปแทน"
+          fi
+          jq '.webapp = {"executeAs":"USER_DEPLOYING","access":"ANYONE_ANONYMOUS"}' "$base" > build/appsscript.json
+
+          echo "--- manifest ที่จะ deploy ---"
+          cat build/appsscript.json
+          echo "--- ไฟล์ที่จะ push ---"
+          ls -la build
+
+      - name: Push ขึ้น Apps Script
+        env:
+          APPS_SCRIPT_ID: ${{ secrets.APPS_SCRIPT_ID }}
+        run: |
+          set -e
+          printf '{"scriptId":"%s","rootDir":"build"}\n' "$APPS_SCRIPT_ID" > .clasp.json
+          clasp push --force
+
+      - name: สร้าง version ใหม่ของ deployment
+        env:
+          DEPLOYMENT_ID: ${{ secrets.APPS_SCRIPT_DEPLOYMENT_ID }}
+          REASON: ${{ github.event.inputs.reason }}
+        run: |
+          set -e
+          desc="${REASON:-auto deploy} @ ${GITHUB_SHA:0:7} ($(date -u '+%Y-%m-%d %H:%M UTC'))"
+          if [ -n "$DEPLOYMENT_ID" ]; then
+            echo "อัปเดต deployment เดิม ($DEPLOYMENT_ID) — URL ของเครื่องสแกนไม่เปลี่ยน"
+            clasp deploy -i "$DEPLOYMENT_ID" -d "$desc"
+          else
+            echo "::warning::ไม่ได้ตั้ง secret APPS_SCRIPT_DEPLOYMENT_ID — จะสร้าง deployment ใหม่ ซึ่งได้ URL ใหม่ (เครื่องสแกนที่หน้างานจะยังใช้ URL เดิมและไม่เห็นการอัปเดตนี้)"
+            clasp deploy -d "$desc"
+          fi
+
+      - name: สรุป deployment ทั้งหมด
+        run: clasp deployments
