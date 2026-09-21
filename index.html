@@ -305,6 +305,15 @@
       </div>
     </div>
 
+    <div class="modal-overlay" id="jobDoneModal">
+      <div class="modal-box" style="width: 560px; padding: 36px; border: 4px solid #2E7D32;">
+        <h2 style="color:#2E7D32; font-size:30px; margin-bottom:16px;">✅ สแกนครบจำนวนแล้ว!</h2>
+        <div id="job-done-msg" style="font-size:20px; margin:0 0 20px; text-align:left; line-height:1.6; background:#E8F5E9; padding:20px; border-radius:10px; color:#1B5E20;"></div>
+        <div style="font-size:15px; color:#666; margin-bottom:18px;">กรุณาหยุดสแกน Job นี้ และเปลี่ยนไป Job Order ถัดไป</div>
+        <button class="btn btn-primary" onclick="closeJobDoneModal()" style="font-size:22px; padding:12px 40px;">รับทราบ (OK)</button>
+      </div>
+    </div>
+
     <div class="modal-overlay" id="editJobCountModal">
       <div class="modal-box">
         <h3 style="color:#d32f2f;">แก้ไขยอดสแกนเกิน (Admin)</h3>
@@ -398,6 +407,8 @@
       var currentStation = localStorage.getItem('station_id') || "";
       var jobScanHistory = JSON.parse(localStorage.getItem('job_scan_history')) || {};
       var jobOverrideSet = {}; // job codes allowed (this session) to exceed Plan qty
+      var jobDoneNotified = {};       // job codes ที่แจ้ง "ครบจำนวน" ไปแล้ว (กันเด้งซ้ำทุกครั้งที่สแกน)
+      var preTestJobDoneNotified = null;
 
       // ยอดสแกนของ Job Order ใช้ข้อมูลจาก Sheet เป็นหลัก (รวมทุกเครื่อง/ทุกวัน) แล้วบวก
       // ยอดที่เพิ่งสแกนในเครื่องนี้แต่ Sheet ยังไม่รู้ เพื่อไม่ให้ตัวเลขบนจอกระพริบถอยหลัง
@@ -787,6 +798,7 @@
           if (document.getElementById('jobChangeBigModal').style.display === 'flex') return;
           if (document.getElementById('stationModal').style.display === 'flex') return;
           if (document.getElementById('jobCompleteModal').style.display === 'flex') return;
+          if (document.getElementById('jobDoneModal').style.display === 'flex') return;
           if (document.getElementById('editJobCountModal').style.display === 'flex') return;
           if (document.getElementById('shiftModal').style.display === 'flex') return;
 
@@ -893,6 +905,7 @@
           }
           updateSyncStatus();
           updateUI();
+          notifyIfJobReachedPlan(currentJob);
       }
 
       // ยอดที่สแกนในเครื่องนี้แต่ Sheet/รอบดึงข้อมูลล่าสุดยังไม่รวม
@@ -988,6 +1001,40 @@
           refocusTrap();
       }
 
+      // แจ้งเตือน (ครั้งเดียวต่อ Job) เมื่อยอดสแกนถึง Plan แล้ว — ใช้ยอดเดียวกับที่แสดงบนจอ
+      // คือยอดรวมทุกเครื่องจาก Sheet ถ้าดึงได้ ไม่งั้น fallback เป็นตัวนับในเครื่อง
+      function notifyIfJobReachedPlan(job) {
+          if (isDashboardMode) return;
+          if (!job || job === "MANUAL_MODE" || job === "N/A") return;
+          if (!jobDataMap[job]) return;
+          var planQty = parseInt(jobDataMap[job].qty) || 0;
+          if (planQty <= 0) return;
+
+          var scanned = getJobScannedCount(job);
+          if (scanned < planQty) {
+              // ยอดตกกลับไปต่ำกว่า Plan (เช่น Void ยอดเกิน) ให้แจ้งได้ใหม่เมื่อครบอีกครั้ง
+              jobDoneNotified[job] = false;
+              return;
+          }
+          if (jobDoneNotified[job]) return;
+          jobDoneNotified[job] = true;
+
+          var over = scanned - planQty;
+          document.getElementById('job-done-msg').innerHTML =
+             `Job: <b>${job}</b><br>` +
+             `Model: <b>${jobDataMap[job].model || "-"}</b><br>` +
+             `Plan: <b>${planQty}</b><br>` +
+             `สแกนแล้ว: <b>${scanned}</b>` +
+             (over > 0 ? ` <span style="color:#d32f2f">(เกินแผน ${over})</span>` : ` (ครบพอดี)`);
+          document.getElementById('jobDoneModal').style.display = 'flex';
+          try { playJobDoneSound(); } catch(e){}
+      }
+
+      function closeJobDoneModal() {
+          document.getElementById('jobDoneModal').style.display = 'none';
+          refocusTrap();
+      }
+
       function closeJobCompleteModal() {
           document.getElementById('jobCompleteModal').style.display = 'none';
           refocusTrap();
@@ -1044,6 +1091,7 @@
                   jobScanHistory[job] = localCount - removed;
                   localStorage.setItem('job_scan_history', JSON.stringify(jobScanHistory));
               }
+              jobDoneNotified[job] = false; // ยอดลดแล้ว ถ้าสแกนจนครบอีกครั้งต้องแจ้งใหม่
               updateJobDisplay();
               return removed;
           }
@@ -1564,6 +1612,7 @@
             // บันทึก snapshot ข้อมูลจริงก่อนเข้า Test Mode
             preTestHistory = JSON.parse(JSON.stringify(productionHistory));
             preTestJobOverrideSet = JSON.parse(JSON.stringify(jobOverrideSet));
+            preTestJobDoneNotified = JSON.parse(JSON.stringify(jobDoneNotified));
             jobTestDelta = {}; // ยอด Job ใน Test Mode นับแยก ไม่แตะยอดจริง/ยอดบน Sheet
             btn.classList.add('active');
             banner.style.display = 'block';
@@ -1588,6 +1637,10 @@
             if (preTestJobOverrideSet !== null) {
                jobOverrideSet = preTestJobOverrideSet;
                preTestJobOverrideSet = null;
+            }
+            if (preTestJobDoneNotified !== null) {
+               jobDoneNotified = preTestJobDoneNotified;
+               preTestJobDoneNotified = null;
             }
          }
          refocusTrap();
@@ -1640,6 +1693,27 @@
 
         oLast.start(now + 0.30);
         oLast.stop(now + 1.0);
+      }
+
+      // เสียงแจ้ง "Job ครบจำนวน" — ยาวกว่าเสียงสแกนปกติ เพื่อให้แยกออกจากกันได้ในไลน์ที่เสียงดัง
+      function playJobDoneSound() {
+        if (audioCtx.state === 'suspended') audioCtx.resume();
+        var now = audioCtx.currentTime;
+        function chime(freq, startTime, duration) {
+            var o = audioCtx.createOscillator();
+            var g = audioCtx.createGain();
+            o.connect(g); g.connect(audioCtx.destination);
+            o.type = 'sine';
+            o.frequency.value = freq;
+            g.gain.setValueAtTime(0.15, startTime);
+            g.gain.exponentialRampToValueAtTime(0.001, startTime + duration);
+            o.start(startTime); o.stop(startTime + duration);
+        }
+        // G5 - C6 - E6 - C6 (เสียงจบงาน)
+        chime(783.99, now + 0.00, 0.25);
+        chime(1046.50, now + 0.18, 0.25);
+        chime(1318.51, now + 0.36, 0.25);
+        chime(1046.50, now + 0.54, 0.60);
       }
 
       function playErrorSound() {
