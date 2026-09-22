@@ -1,0 +1,5 @@
+# ไฟล์ที่ workflow สร้างระหว่าง deploy (ไม่ commit)
+/build/
+/remote/
+/.clasp.json
+/node_modules/
