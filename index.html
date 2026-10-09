@@ -1648,12 +1648,32 @@
          }
 
          // มี Job เปิดอยู่ของรุ่นนี้ → ให้เลือกเอง / ไม่มีเลย → สร้าง Job อัตโนมัติ
-         var openJobs = findOpenJobs(newModel);
-         if (openJobs.length > 0) {
-             showJobPickModal(newModel, openJobs);
-         } else {
-             pickJobAfterChange(null);
-         }
+         // ดึงรายการ Job จากชีท Plan ใหม่ก่อน เพื่อไม่ให้ Job ที่หลังบ้านเพิ่งปิด (Status = Closed /
+         // มี Actual complete date) ค้างอยู่ในรายการจากรอบที่โหลดไว้ตอนเปิดหน้า
+         // ดึงไม่สำเร็จ (เน็ตหลุด/โหมดพรีวิว) ก็ใช้รายการเดิมที่มีอยู่
+         var offerJobs = function() {
+             var openJobs = findOpenJobs(newModel);
+             if (openJobs.length > 0) {
+                 showJobPickModal(newModel, openJobs);
+             } else {
+                 pickJobAfterChange(null);
+             }
+         };
+         if (!isGoogleScriptReady()) { offerJobs(); return; }
+         var display = document.getElementById('display-area');
+         display.innerText = "กำลังโหลดรายการ Job...";
+         display.style.color = "#1565C0";
+         google.script.run.withSuccessHandler(function(jobs) {
+             if (jobs && !(jobs[0] && jobs[0].error)) {
+                 jobDataMap = {};
+                 jobOrderSeq = [];
+                 jobs.forEach(function(j) { jobDataMap[j.job] = { model: j.model, qty: j.qty }; jobOrderSeq.push(j.job); });
+             }
+             offerJobs();
+         }).withFailureHandler(function(err) {
+             console.error("getActiveJobOrders failed:", err);
+             offerJobs();
+         }).getActiveJobOrders();
       }
       function closeModal() { document.getElementById('changeModelModal').style.display = 'none'; document.getElementById('admin-pass').value = ""; refocusTrap(); }
 
