@@ -1190,6 +1190,7 @@
                   var activeShiftKey = getCurrentShiftKey();
                   pendingQueue.forEach(function(rec) {
                       if (getShiftKeyFromLogTimestamp(rec[0]) !== activeShiftKey) return;
+                      if (rec[4] !== "OK") return; // แถว CHANGEOVER ไม่ใช่ยอดผลิต
 
                       var model = String(rec[2] || "").trim();
                       if (!model) return;
@@ -1607,10 +1608,21 @@
           document.getElementById('jobPickModal').style.display = 'flex';
       }
 
+      // บันทึกเวลาเปลี่ยนรุ่นลง Log: Status CHANGEOVER ไม่ถูกนับเป็นยอด
+      // (backend และสคริปต์ Actual Scan ในชีท Plan นับเฉพาะ OK) คอลัมน์ Job คือ Job ที่จะทำต่อ
+      var changeoverFromModel = "";
+      function logChangeover(job) {
+          if (isTestMode) return;
+          pendingQueue.push([new Date().toLocaleString('th-TH'), job || "", currentModel, "FROM " + (changeoverFromModel || "-"),
+              "CHANGEOVER", currentStation || "Unknown", getShiftLabel(currentShift), ""]);
+          updateSyncStatus();
+      }
+
       // job = null หมายถึงสร้าง Job อัตโนมัติ (AUTO-...)
       function pickJobAfterChange(job) {
           currentJob = job || getAutoJobId(currentModel);
           localStorage.setItem('current_job', currentJob);
+          logChangeover(currentJob);
           document.getElementById('jobPickModal').style.display = 'none';
           updateJobDisplay();
           fetchJobScanCounts();
@@ -1628,18 +1640,13 @@
          var newModel = tempNewModel;
          setCurrentModel(newModel);
 
-         // บันทึกเวลาเปลี่ยนรุ่นลง Log (Status CHANGEOVER ไม่ถูกนับเป็นยอด)
-         // เว้นคอลัมน์ Job ว่างไว้ เผื่อสูตรนับยอดในชีทนับตาม Job โดยไม่ดู Status
-         if (!isTestMode) {
-             pendingQueue.push([new Date().toLocaleString('th-TH'), "", newModel, "FROM " + (oldModel || "-"),
-                 "CHANGEOVER", currentStation || "Unknown", getShiftLabel(currentShift), ""]);
-             updateSyncStatus();
-         }
-
+         // แถว CHANGEOVER จะบันทึกตอนได้ Job แล้ว (pickJobAfterChange) เพื่อให้มีเลข Job ที่ไลน์กำลังเปลี่ยนไปทำ
+         changeoverFromModel = oldModel;
          closeModal();
 
          // Manual mode ยังคงเป็น Manual (ทุกสแกนบันทึกเป็น Job auto ของรุ่นนั้นอยู่แล้ว)
          if (currentJob === "MANUAL_MODE") {
+             logChangeover(getAutoJobId(newModel));
              updateJobDisplay();
              var display = document.getElementById('display-area');
              display.innerText = "MANUAL: " + getAutoJobId(newModel);
@@ -1703,6 +1710,7 @@
              // เพื่อให้ยอดบนจอไม่ลดลงชั่วขณะระหว่างรอดึงยอดรอบใหม่จาก Sheet
              var batchByJob = {};
              batchToSend.forEach(function(row) {
+                 if (row[4] !== "OK") return; // แถว CHANGEOVER ไม่ใช่ยอดผลิต
                  var j = row[1];
                  batchByJob[j] = (batchByJob[j] || 0) + 1;
              });
