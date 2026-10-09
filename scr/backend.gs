@@ -187,6 +187,12 @@ function ensureLogScanGroupColumn_(sheet) {
   return scanGroupColumn;
 }
 
+// แถวที่ถือเป็นยอดผลิต: ไม่นับ VOID (ยกเลิกแล้ว) และ CHANGEOVER (บันทึกเวลาเปลี่ยนรุ่น ไม่ใช่ชิ้นงาน)
+function isCountedStatus_(status) {
+  var s = String(status || "").trim().toUpperCase();
+  return s !== "VOID" && s !== "CHANGEOVER";
+}
+
 // 4. บันทึกข้อมูลลง Log
 function saveBatchData(jsonString) {
   try {
@@ -265,7 +271,7 @@ function getJobScanCounts() {
       for (var i = 0; i < data.length; i++) {
         var job = String(data[i][0]).trim();
         if (job === "") continue;
-        if (String(data[i][3]).trim().toUpperCase() === "VOID") continue;
+        if (!isCountedStatus_(data[i][3])) continue;
         snap.counts[job] = (snap.counts[job] || 0) + 1;
       }
       snap.lastRow = lastRow;
@@ -370,7 +376,7 @@ function voidLastJobScans(job, count, passwordInput) {
     for (var i = data.length - 1; i >= 0 && voided < count; i--) {
       var rowJob = String(data[i][1]).trim();
       var rowStatus = String(data[i][4]).trim();
-      if (rowJob === String(job).trim() && rowStatus !== "VOID") {
+      if (rowJob === String(job).trim() && isCountedStatus_(rowStatus)) {
         var sheetRow = i + 2; // +2: header row + 1-indexed range
         logSheet.getRange(sheetRow, 5).setValue("VOID");
         voided++;
@@ -506,7 +512,7 @@ function readTodayLogRows_() {
     var model = String(data[i][2] || "").trim();
     var status = String(data[i][4] || "").trim().toUpperCase();
     var rowShiftKey = getShiftKey_(timestamp.year, timestamp.month, timestamp.day, timestamp.hour);
-    if (rowShiftKey === currentShiftKey && status !== "VOID" && model !== "") {
+    if (rowShiftKey === currentShiftKey && isCountedStatus_(status) && model !== "") {
       shiftRows.push({
         job: String(data[i][1] || "").trim(),
         model: model,
