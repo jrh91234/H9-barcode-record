@@ -258,9 +258,9 @@
         <h2 style="color:red;">WARNING!</h2>
         <div id="modal-msg" style="font-size:18px; margin-bottom:10px;"></div>
         <div id="admin-section" style="display:none;">
-            <input type="password" id="admin-pass" class="modal-input" placeholder="Password (1234)" style="width:50%;">
+            <input type="password" id="admin-pass" class="modal-input" placeholder="Password" style="width:50%;">
             <br>
-            <button class="btn btn-danger" onclick="confirmChangeModel()">Override Switch</button>
+            <button class="btn btn-danger" onclick="confirmChangeModel()">เปลี่ยนรุ่น (Override Switch)</button>
         </div>
         <button class="btn" onclick="closeModal()">Close</button>
       </div>
@@ -354,6 +354,9 @@
       var barcodeMultiplierDB = {};
       var capDB = {};
       var jobDataMap = {};
+      // ลำดับ Job ตามแถวในชีท Plan (บนสุด = เก่าสุด) เก็บแยกจาก jobDataMap
+      // เพราะ object ของ JS เรียงคีย์ที่เป็นตัวเลขใหม่เอง ลำดับแถวเดิมจึงหายไป
+      var jobOrderSeq = [];
 
       // บาร์โค้ดจริงบางตัวขึ้นต้นด้วย 0 (เช่นรหัส GS1/UPC) แต่ถ้าคอลัมน์ Barcode ใน Sheet
       // ถูกเก็บเป็นชนิดตัวเลข Google Sheets จะตัดเลข 0 นำหน้าทิ้งเงียบๆ ทำให้เทียบกับที่สแกน
@@ -571,7 +574,8 @@
       if(isGoogleScriptReady() && !isDashboardMode && currentJob !== "N/A" && currentJob !== "MANUAL_MODE") {
           google.script.run.withSuccessHandler(function(jobs) {
              if(jobs && !jobs[0]?.error) {
-                jobs.forEach(j => { jobDataMap[j.job] = { model: j.model, qty: j.qty }; });
+                jobOrderSeq = [];
+                jobs.forEach(j => { jobDataMap[j.job] = { model: j.model, qty: j.qty }; jobOrderSeq.push(j.job); });
                 updateJobDisplay(); // Plan/คงเหลือ เพิ่งพร้อมใช้หลังโหลดเสร็จ
              }
           }).withFailureHandler(function(err) {
@@ -680,8 +684,11 @@
       function updateJobDisplay() {
           var el = document.getElementById('current-job-display');
           if (currentJob === "MANUAL_MODE") {
-              el.innerText = "MANUAL (No Check)";
+              el.innerText = "MANUAL (No Check) · บันทึกเป็น " + (currentModel ? getAutoJobId(currentModel) : "Job auto");
               el.style.color = "#FF9800";
+          } else if (isAutoJob(currentJob)) {
+              el.innerText = currentJob + " (Job สร้างโดยระบบ · ไม่มีใน Plan)";
+              el.style.color = "#7B1FA2";
           } else if (currentJob && currentJob !== "N/A" && jobDataMap[currentJob]) {
               var scannedTxt = "Plan: " + jobDataMap[currentJob].qty + " | Scanned: " + getJobScannedCount(currentJob);
               var remaining = getJobRemainingCount(currentJob);
@@ -774,6 +781,9 @@
           handleScannerInput(e); 
       });
       
+      document.getElementById('admin-pass').addEventListener('keydown', function(e) {
+          if (e.key === 'Enter') { e.preventDefault(); confirmChangeModel(); }
+      });
       document.getElementById('job-admin-pass').addEventListener('keydown', function(e) {
           if (e.key === 'Enter') { executeJobChange(); }
       });
@@ -841,14 +851,16 @@
              if (requiredModel !== foundModel) {
                 try { playErrorSound(); } catch(e){}
                 updateStatusLight('NG');
+                tempNewModel = foundModel;
                 document.getElementById('modal-msg').innerHTML =
                    `<b>Job Order Mismatch!</b><br>` +
                    `Job: ${currentJob}<br>` +
                    `Required: <b style='color:green'>${requiredModel}</b><br>` +
-                   `Scanned: <b style='color:red'>${foundModel}</b>`;
-                
-                document.getElementById('admin-section').style.display = 'none';
+                   `Scanned: <b style='color:red'>${foundModel}</b>` +
+                   CHANGE_MODEL_HINT;
+                document.getElementById('admin-section').style.display = 'block';
                 document.getElementById('changeModelModal').style.display = 'flex';
+                document.getElementById('admin-pass').focus();
                 return;
              }
 
@@ -875,7 +887,8 @@
               updateStatusLight('NG');
               tempNewModel = foundModel;
               document.getElementById('modal-msg').innerHTML = 
-                  `Current: <b>${currentModel}</b><br>Scanned: <b style='color:red'>${foundModel}</b>`;
+                  `Current: <b>${currentModel}</b><br>Scanned: <b style='color:red'>${foundModel}</b>` +
+                  CHANGE_MODEL_HINT;
               document.getElementById('admin-section').style.display = 'block';
               document.getElementById('changeModelModal').style.display = 'flex';
               document.getElementById('admin-pass').focus();
@@ -900,7 +913,9 @@
             // ระบบอื่น (เช่น Job order tracking) แยกออกจากการสแกนซ้ำที่ไม่ตั้งใจได้ โดยไม่ต้องเดา
             var scanGroupId = generateScanGroupId();
             for (var q = 0; q < scanQty; q++) {
-                pendingQueue.push([dateStr, currentJob, currentModel, barcode, "OK", currentStation || "Unknown", getShiftLabel(currentShift), scanGroupId]);
+                // Manual mode ไม่มี Job จริง บันทึกเป็น Job ที่ระบบสร้าง (AUTO-...) ของรุ่นนั้นแทน
+                var logJob = currentJob === "MANUAL_MODE" ? getAutoJobId(currentModel) : currentJob;
+                pendingQueue.push([dateStr, logJob, currentModel, barcode, "OK", currentStation || "Unknown", getShiftLabel(currentShift), scanGroupId]);
             }
           }
           updateSyncStatus();
@@ -1354,6 +1369,7 @@
           google.script.run.withSuccessHandler(function(jobs) {
               selectBox.innerHTML = "";
               jobDataMap = {};
+              jobOrderSeq = [];
 
               if (jobs.length === 0 || (jobs.length === 1 && jobs[0].error)) {
                   var option = document.createElement("option");
@@ -1370,6 +1386,7 @@
                   jobs.forEach(function(j) {
                       var option = document.createElement("option");
                       jobDataMap[j.job] = { model: j.model, qty: j.qty };
+                      jobOrderSeq.push(j.job);
 
                       var remainTxt = "";
                       if (isJobCountFromCloud()) {
@@ -1533,9 +1550,69 @@
           }
           restoreHistory();
       }
+      var CHANGE_MODEL_HINT =
+          `<br><span style='font-size:15px;color:#555'>ใส่รหัสผ่านเพื่อเปลี่ยนรุ่น · ระบบจะเลือก Job ที่เปิดอยู่เก่าสุดของรุ่นนี้ให้ ` +
+          `ถ้าไม่มีจะสร้าง Job ให้อัตโนมัติ · ชิ้นนี้ไม่นับยอด</span>`;
+
+      function isAutoJob(job) {
+          return String(job || '').indexOf('AUTO-') === 0;
+      }
+
+      // Job ที่ระบบสร้างเมื่อรุ่นนั้นไม่มี Job เปิดอยู่ใน Plan (หรือสแกนแบบ Manual)
+      // ใช้ วันผลิต-กะ-รุ่น เป็นชื่อ หลายเครื่องที่เดินรุ่นเดียวกันในกะเดียวกันจึงได้ Job เดียวกัน
+      // กะดึกหลังเที่ยงคืนนับเป็นวันผลิตของวันก่อน ตาม getCurrentShiftKey
+      function getAutoJobId(model) {
+          var key = getCurrentShiftKey(); // เช่น 2026-10-09@08
+          var parts = key.split('@');
+          return 'AUTO-' + parts[0].replace(/-/g, '') + '-' + (parts[1] === '08' ? 'D' : 'N') + '-' + model;
+      }
+
+      // Job ที่ยังเปิดอยู่เก่าสุด (แถวบนสุดในชีท Plan) ของรุ่นนี้ ข้าม Job ที่สแกนครบแผนแล้วแต่ยังไม่ปิด
+      function findOldestOpenJob(model) {
+          for (var i = 0; i < jobOrderSeq.length; i++) {
+              var job = jobOrderSeq[i];
+              var info = jobDataMap[job];
+              if (!info || info.model !== model) continue;
+              var planQty = parseInt(info.qty) || 0;
+              if (planQty > 0 && !jobOverrideSet[job] && getJobScannedCount(job) >= planQty) continue;
+              return job;
+          }
+          return null;
+      }
+
       function confirmChangeModel() {
          var pass = document.getElementById('admin-pass').value;
-         if(pass === "1234") { setCurrentModel(tempNewModel); closeModal(); } else { alert("Wrong Password"); }
+         if (pass !== "1234") { alert("Wrong Password"); return; }
+
+         var oldModel = currentModel;
+         var newModel = tempNewModel;
+         setCurrentModel(newModel);
+
+         // Manual mode ยังคงเป็น Manual (ทุกสแกนบันทึกเป็น Job auto ของรุ่นนั้นอยู่แล้ว)
+         var resultMsg;
+         if (currentJob !== "MANUAL_MODE") {
+             var job = findOldestOpenJob(newModel);
+             currentJob = job || getAutoJobId(newModel);
+             localStorage.setItem('current_job', currentJob);
+             resultMsg = job ? ("JOB: " + job) : ("AUTO JOB: " + currentJob);
+         } else {
+             resultMsg = "MANUAL: " + getAutoJobId(newModel);
+         }
+         updateJobDisplay();
+         fetchJobScanCounts();
+
+         // บันทึกเวลาเปลี่ยนรุ่นลง Log (Status CHANGEOVER ไม่ถูกนับเป็นยอด)
+         // เว้นคอลัมน์ Job ว่างไว้ เผื่อสูตรนับยอดในชีทนับตาม Job โดยไม่ดู Status
+         if (!isTestMode) {
+             pendingQueue.push([new Date().toLocaleString('th-TH'), "", newModel, "FROM " + (oldModel || "-"),
+                 "CHANGEOVER", currentStation || "Unknown", getShiftLabel(currentShift), ""]);
+             updateSyncStatus();
+         }
+
+         var display = document.getElementById('display-area');
+         display.innerText = resultMsg;
+         display.style.color = isAutoJob(currentJob) ? "#7B1FA2" : "green";
+         closeModal();
       }
       function closeModal() { document.getElementById('changeModelModal').style.display = 'none'; document.getElementById('admin-pass').value = ""; refocusTrap(); }
 
