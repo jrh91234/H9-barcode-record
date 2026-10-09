@@ -280,6 +280,15 @@
       </div>
     </div>
 
+    <div class="modal-overlay" id="jobPickModal">
+      <div class="modal-box">
+        <h3>เลือก Job ของรุ่น <span id="job-pick-model" style="color:#1565C0"></span></h3>
+        <div style="font-size:13px; color:#666; margin-bottom:8px;">เปลี่ยนรุ่นแล้ว เลือก Job ที่จะสแกนต่อ (เรียงจากแถวบนสุดในชีท Plan)</div>
+        <div id="job-pick-list" style="max-height:50vh; overflow-y:auto;"></div>
+        <button class="btn" style="background:#7B1FA2;color:white;width:90%;" onclick="pickJobAfterChange(null)">ไม่มี Job ที่ต้องการ → สร้าง Job อัตโนมัติ (ระบบสร้าง)</button>
+      </div>
+    </div>
+
     <div class="modal-overlay" id="shiftModal">
       <div class="modal-box">
         <h3>เลือกชื่อกะการทำงาน (Shift)</h3>
@@ -769,7 +778,8 @@
           var modal5 = document.getElementById('jobCompleteModal').style.display === 'flex';
           var modal6 = document.getElementById('editJobCountModal').style.display === 'flex';
           var modal7 = document.getElementById('shiftModal').style.display === 'flex';
-          if (!modal1 && !modal2 && !modal3 && !modal4 && !modal5 && !modal6 && !modal7) document.getElementById('scan-trap').focus();
+          var modal8 = document.getElementById('jobPickModal').style.display === 'flex';
+          if (!modal1 && !modal2 && !modal3 && !modal4 && !modal5 && !modal6 && !modal7 && !modal8) document.getElementById('scan-trap').focus();
       }
       setInterval(refocusTrap, 1000);
 
@@ -811,6 +821,7 @@
           if (document.getElementById('jobDoneModal').style.display === 'flex') return;
           if (document.getElementById('editJobCountModal').style.display === 'flex') return;
           if (document.getElementById('shiftModal').style.display === 'flex') return;
+          if (document.getElementById('jobPickModal').style.display === 'flex') return;
 
           if (e.key === 'Tab' || e.key === 'Enter') { e.preventDefault(); }
           var char = thaiMap[e.key] || e.key;
@@ -1551,8 +1562,8 @@
           restoreHistory();
       }
       var CHANGE_MODEL_HINT =
-          `<br><span style='font-size:15px;color:#555'>ใส่รหัสผ่านเพื่อเปลี่ยนรุ่น · ระบบจะเลือก Job ที่เปิดอยู่เก่าสุดของรุ่นนี้ให้ ` +
-          `ถ้าไม่มีจะสร้าง Job ให้อัตโนมัติ · ชิ้นนี้ไม่นับยอด</span>`;
+          `<br><span style='font-size:15px;color:#555'>ใส่รหัสผ่านเพื่อเปลี่ยนรุ่น · จากนั้นเลือก Job ของรุ่นนี้ ` +
+          `ถ้าไม่มี Job เปิดอยู่จะสร้าง Job ให้อัตโนมัติ · ชิ้นนี้ไม่นับยอด</span>`;
 
       function isAutoJob(job) {
           return String(job || '').indexOf('AUTO-') === 0;
@@ -1567,17 +1578,46 @@
           return 'AUTO-' + parts[0].replace(/-/g, '') + '-' + (parts[1] === '08' ? 'D' : 'N') + '-' + model;
       }
 
-      // Job ที่ยังเปิดอยู่เก่าสุด (แถวบนสุดในชีท Plan) ของรุ่นนี้ ข้าม Job ที่สแกนครบแผนแล้วแต่ยังไม่ปิด
-      function findOldestOpenJob(model) {
-          for (var i = 0; i < jobOrderSeq.length; i++) {
-              var job = jobOrderSeq[i];
+      // Job ที่ยังเปิดอยู่ของรุ่นนี้ เรียงตามแถวในชีท Plan (บนสุด = เก่าสุด)
+      // ข้าม Job ที่สแกนครบแผนแล้วแต่ยังไม่ปิด เพราะเลือกไปก็จะเด้งหน้าต่าง "ครบจำนวน" ทันที
+      function findOpenJobs(model) {
+          return jobOrderSeq.filter(function(job) {
               var info = jobDataMap[job];
-              if (!info || info.model !== model) continue;
+              if (!info || info.model !== model) return false;
               var planQty = parseInt(info.qty) || 0;
-              if (planQty > 0 && !jobOverrideSet[job] && getJobScannedCount(job) >= planQty) continue;
-              return job;
-          }
-          return null;
+              return !(planQty > 0 && !jobOverrideSet[job] && getJobScannedCount(job) >= planQty);
+          });
+      }
+
+      function showJobPickModal(model, jobs) {
+          document.getElementById('job-pick-model').innerText = model;
+          var list = document.getElementById('job-pick-list');
+          list.innerHTML = "";
+          jobs.forEach(function(job) {
+              var info = jobDataMap[job];
+              var remain = getJobRemainingCount(job);
+              var btn = document.createElement('button');
+              btn.className = 'btn btn-primary';
+              btn.style.cssText = 'width:90%; text-align:left; font-size:18px;';
+              btn.innerHTML = '<b>' + job + '</b><br><span style="font-size:14px">Plan: ' + info.qty +
+                  ' | สแกนแล้ว: ' + getJobScannedCount(job) + (remain !== null ? ' | เหลือ: ' + remain : '') + '</span>';
+              btn.onclick = function() { pickJobAfterChange(job); };
+              list.appendChild(btn);
+          });
+          document.getElementById('jobPickModal').style.display = 'flex';
+      }
+
+      // job = null หมายถึงสร้าง Job อัตโนมัติ (AUTO-...)
+      function pickJobAfterChange(job) {
+          currentJob = job || getAutoJobId(currentModel);
+          localStorage.setItem('current_job', currentJob);
+          document.getElementById('jobPickModal').style.display = 'none';
+          updateJobDisplay();
+          fetchJobScanCounts();
+          var display = document.getElementById('display-area');
+          display.innerText = (job ? "JOB: " : "AUTO JOB: ") + currentJob;
+          display.style.color = job ? "green" : "#7B1FA2";
+          refocusTrap();
       }
 
       function confirmChangeModel() {
@@ -1588,19 +1628,6 @@
          var newModel = tempNewModel;
          setCurrentModel(newModel);
 
-         // Manual mode ยังคงเป็น Manual (ทุกสแกนบันทึกเป็น Job auto ของรุ่นนั้นอยู่แล้ว)
-         var resultMsg;
-         if (currentJob !== "MANUAL_MODE") {
-             var job = findOldestOpenJob(newModel);
-             currentJob = job || getAutoJobId(newModel);
-             localStorage.setItem('current_job', currentJob);
-             resultMsg = job ? ("JOB: " + job) : ("AUTO JOB: " + currentJob);
-         } else {
-             resultMsg = "MANUAL: " + getAutoJobId(newModel);
-         }
-         updateJobDisplay();
-         fetchJobScanCounts();
-
          // บันทึกเวลาเปลี่ยนรุ่นลง Log (Status CHANGEOVER ไม่ถูกนับเป็นยอด)
          // เว้นคอลัมน์ Job ว่างไว้ เผื่อสูตรนับยอดในชีทนับตาม Job โดยไม่ดู Status
          if (!isTestMode) {
@@ -1609,10 +1636,24 @@
              updateSyncStatus();
          }
 
-         var display = document.getElementById('display-area');
-         display.innerText = resultMsg;
-         display.style.color = isAutoJob(currentJob) ? "#7B1FA2" : "green";
          closeModal();
+
+         // Manual mode ยังคงเป็น Manual (ทุกสแกนบันทึกเป็น Job auto ของรุ่นนั้นอยู่แล้ว)
+         if (currentJob === "MANUAL_MODE") {
+             updateJobDisplay();
+             var display = document.getElementById('display-area');
+             display.innerText = "MANUAL: " + getAutoJobId(newModel);
+             display.style.color = "#FF9800";
+             return;
+         }
+
+         // มี Job เปิดอยู่ของรุ่นนี้ → ให้เลือกเอง / ไม่มีเลย → สร้าง Job อัตโนมัติ
+         var openJobs = findOpenJobs(newModel);
+         if (openJobs.length > 0) {
+             showJobPickModal(newModel, openJobs);
+         } else {
+             pickJobAfterChange(null);
+         }
       }
       function closeModal() { document.getElementById('changeModelModal').style.display = 'none'; document.getElementById('admin-pass').value = ""; refocusTrap(); }
 
