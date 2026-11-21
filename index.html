@@ -398,7 +398,39 @@
           return (m && m > 0) ? m : 1;
       }
       
-      var pendingQueue = [];    
+      // คิวรอส่งขึ้น Sheet เก็บลง localStorage ด้วย เพื่อไม่ให้ยอดที่ยังไม่ได้ส่งหายเมื่อ
+      // รีเฟรชหน้า/ปิดเบราว์เซอร์/เครื่องดับระหว่างเน็ตล่ม (เวลาในแถวคือเวลาที่สแกนจริงอยู่แล้ว)
+      var PENDING_QUEUE_KEY = 'pending_queue';
+      var INFLIGHT_BATCH_KEY = 'pending_inflight_batch';
+      function loadPendingQueue() {
+          try {
+              var q = JSON.parse(localStorage.getItem(PENDING_QUEUE_KEY));
+              return Array.isArray(q) ? q : [];
+          } catch (e) { return []; }
+      }
+      function savePendingQueue() {
+          try {
+              localStorage.setItem(PENDING_QUEUE_KEY, JSON.stringify(pendingQueue));
+          } catch (e) {
+              console.error("savePendingQueue failed:", e);
+          }
+      }
+      // batch ที่ส่งไปแล้วแต่ยังไม่ได้คำยืนยัน: {id, count} = แถวแรก count แถวของคิว
+      // ส่งซ้ำด้วย id เดิมเสมอ ให้ server ข้ามได้ถ้าเคยบันทึกแล้ว (กันแถวซ้ำ)
+      function loadInflightBatch() {
+          try {
+              var b = JSON.parse(localStorage.getItem(INFLIGHT_BATCH_KEY));
+              if (b && b.id && b.count > 0) return b;
+          } catch (e) {}
+          return null;
+      }
+      function saveInflightBatch(b) {
+          try {
+              if (b) localStorage.setItem(INFLIGHT_BATCH_KEY, JSON.stringify(b));
+              else localStorage.removeItem(INFLIGHT_BATCH_KEY);
+          } catch (e) {}
+      }
+      var pendingQueue = loadPendingQueue();
       var currentModel = "";
       var currentJob = "N/A";   
       var currentShift = "";
@@ -429,6 +461,11 @@
       var cloudJobCountsReady = false; // false = ยังดึงไม่สำเร็จ ให้ fallback เป็นยอดในเครื่อง
       var isFetchingJobCounts = false;
       var jobUnsentDelta = {};        // ยอดที่สแกนแล้วแต่ยังอยู่ใน pendingQueue (ยังไม่เข้า Sheet)
+      // คิวที่กู้มาจาก localStorage ยังไม่อยู่ใน Sheet ต้องนับเป็นยอดค้างส่งด้วย
+      pendingQueue.forEach(function(row) {
+          if (row[4] !== "OK") return; // แถว CHANGEOVER ไม่ใช่ยอดผลิต
+          jobUnsentDelta[row[1]] = (jobUnsentDelta[row[1]] || 0) + 1;
+      });
       var jobInflightDeltas = [];     // [{job, qty, seq}] บันทึกลง Sheet แล้ว แต่ยอด cloud รอบล่าสุดอาจยังไม่รวม
       var jobTestDelta = {};          // ยอดสแกนใน Test Mode (ไม่ถูกบันทึกลง Sheet)
       var syncSeqCounter = 0;
@@ -928,6 +965,7 @@
                 var logJob = currentJob === "MANUAL_MODE" ? getAutoJobId(currentModel) : currentJob;
                 pendingQueue.push([dateStr, logJob, currentModel, barcode, "OK", currentStation || "Unknown", getShiftLabel(currentShift), scanGroupId]);
             }
+            savePendingQueue();
           }
           updateSyncStatus();
           updateUI();
@@ -1615,6 +1653,7 @@
           if (isTestMode) return;
           pendingQueue.push([new Date().toLocaleString('th-TH'), job || "", currentModel, "FROM " + (changeoverFromModel || "-"),
               "CHANGEOVER", currentStation || "Unknown", getShiftLabel(currentShift), ""]);
+          savePendingQueue();
           updateSyncStatus();
       }
 
@@ -1692,7 +1731,13 @@
             markLocalPreviewMode();
             return;
          }
-         var batchToSend = pendingQueue.slice();
+         // ส่ง batch เดิมให้สำเร็จก่อน (id เดิม แถวเดิม) แล้วค่อยเริ่ม batch ใหม่
+         var batch = loadInflightBatch();
+         if (!batch || batch.count > pendingQueue.length) {
+             batch = { id: generateScanGroupId(), count: pendingQueue.length };
+             saveInflightBatch(batch);
+         }
+         var batchToSend = pendingQueue.slice(0, batch.count);
          isSyncing = true;
          document.getElementById('sync-status').innerText = "Syncing...";
          document.getElementById('sync-status').style.color = "#FFD700";
@@ -1706,6 +1751,8 @@
                  return;
              }
              pendingQueue.splice(0, batchToSend.length);
+             savePendingQueue();
+             saveInflightBatch(null);
              // ย้ายยอดของ batch นี้จาก "ยังไม่ส่ง" ไปเป็น "ส่งแล้วรอ cloud ยืนยัน"
              // เพื่อให้ยอดบนจอไม่ลดลงชั่วขณะระหว่างรอดึงยอดรอบใหม่จาก Sheet
              var batchByJob = {};
@@ -1731,7 +1778,7 @@
              var errMsg = (err && err.message) ? err.message : (err || "Unknown error");
              document.getElementById('sync-status').innerText = "Err: " + errMsg;
              document.getElementById('sync-status').style.color = "red";
-         }).saveBatchData(JSON.stringify(batchToSend));
+         }).saveBatchData(JSON.stringify(batchToSend), batch.id);
       }
       function updateSyncStatus() { var el = document.getElementById('pending-count'); if(el) el.innerText = pendingQueue.length; }
       function updateClock() {

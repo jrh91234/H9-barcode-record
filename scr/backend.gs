@@ -194,17 +194,34 @@ function isCountedStatus_(status) {
 }
 
 // 4. บันทึกข้อมูลลง Log
-function saveBatchData(jsonString) {
+// batchId (ไม่บังคับ): Client รุ่นใหม่ส่ง ID เดิมทุกครั้งที่ส่ง batch เดิมซ้ำ (เช่น เน็ตหลุดหลัง
+// server บันทึกแล้วแต่คำตอบไปไม่ถึงเครื่อง) ถ้าเคยบันทึก ID นี้แล้วจะตอบ "Saved" โดยไม่เขียนซ้ำ
+// จำ ID ไว้ใน CacheService ได้สูงสุด 6 ชั่วโมง (เพดานของ Apps Script)
+var SAVED_BATCH_CACHE_PREFIX = "savedBatch_";
+var SAVED_BATCH_CACHE_TTL = 21600;
+
+function saveBatchData(jsonString, batchId) {
   try {
     var dataArray = JSON.parse(jsonString);
     if (!dataArray || dataArray.length === 0) return "Empty";
-    
+
     var ss = SpreadsheetApp.getActiveSpreadsheet();
     var logSheet = ss.getSheetByName(LOG_SHEET_NAME);
     if (!logSheet) return "Error: Sheet '" + LOG_SHEET_NAME + "' Not Found";
-    
+
+    batchId = batchId ? String(batchId).trim() : "";
+    var cache = null;
+    if (batchId) {
+      try { cache = CacheService.getScriptCache(); } catch (e) { cache = null; }
+    }
+
     var lock = LockService.getScriptLock();
     if (lock.tryLock(10000)) {
+       // เช็คภายใต้ lock เพื่อไม่ให้สอง request ของ batch เดียวกันเขียนพร้อมกันได้
+       if (cache && cache.get(SAVED_BATCH_CACHE_PREFIX + batchId)) {
+         lock.releaseLock();
+         return "Saved " + dataArray.length + " (duplicate skipped)";
+       }
        var shiftColumn = ensureLogShiftColumn_(logSheet); // 1-based column number
        var scanGroupColumn = ensureLogScanGroupColumn_(logSheet); // 1-based column number
        var writeWidth = Math.max(shiftColumn, scanGroupColumn, 6);
@@ -227,6 +244,9 @@ function saveBatchData(jsonString) {
        var lastRow = logSheet.getLastRow();
        logSheet.getRange(lastRow + 1, 1, rowsToWrite.length, writeWidth).setValues(rowsToWrite);
        SpreadsheetApp.flush();
+       if (cache) {
+         try { cache.put(SAVED_BATCH_CACHE_PREFIX + batchId, "1", SAVED_BATCH_CACHE_TTL); } catch (e) {}
+       }
        lock.releaseLock();
        return "Saved " + dataArray.length;
     } else {
