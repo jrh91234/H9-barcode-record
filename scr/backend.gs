@@ -193,14 +193,52 @@ function isCountedStatus_(status) {
   return s !== "VOID" && s !== "CHANGEOVER";
 }
 
+// ค้นหาคอลัมน์ RowID จากหัวตาราง (คืนค่าเป็น index แบบเริ่มที่ 0)
+// RowID คือ ID ไม่ซ้ำของแต่ละแถวที่เครื่องสแกนสร้างตอนสแกน ใช้กันบันทึกแถวเดิมซ้ำ
+// เมื่อคิวถูกส่งซ้ำ หรือเมื่ออัปโหลดไฟล์คิวที่ Export ไว้ตอนพื้นที่ในเครื่องเต็ม
+function getLogRowIdColumn_(sheet) {
+  var lastCol = sheet.getLastColumn();
+  if (lastCol < 1) return -1;
+
+  var headers = sheet.getRange(1, 1, 1, lastCol).getValues()[0];
+  for (var i = 0; i < headers.length; i++) {
+    var header = String(headers[i] || "").trim().toLowerCase().replace(/\s+/g, " ");
+    if (header === "rowid" || header === "row id") return i;
+  }
+  return -1;
+}
+
+function ensureLogRowIdColumn_(sheet) {
+  var existingColumn = getLogRowIdColumn_(sheet);
+  if (existingColumn >= 0) return existingColumn + 1; // 1-based column number
+
+  var rowIdColumn = Math.max(sheet.getLastColumn() + 1, 9);
+  sheet.getRange(1, rowIdColumn).setValue("RowID");
+  return rowIdColumn;
+}
+
 // 4. บันทึกข้อมูลลง Log
-// batchId (ไม่บังคับ): Client รุ่นใหม่ส่ง ID เดิมทุกครั้งที่ส่ง batch เดิมซ้ำ (เช่น เน็ตหลุดหลัง
-// server บันทึกแล้วแต่คำตอบไปไม่ถึงเครื่อง) ถ้าเคยบันทึก ID นี้แล้วจะตอบ "Saved" โดยไม่เขียนซ้ำ
-// จำ ID ไว้ใน CacheService ได้สูงสุด 6 ชั่วโมง (เพดานของ Apps Script)
+// กันบันทึกซ้ำ 2 ชั้น:
+// 1) batchId (ไม่บังคับ): Client ส่ง ID เดิมทุกครั้งที่ส่ง batch เดิมซ้ำ (เช่น เน็ตหลุดหลัง server
+//    บันทึกแล้วแต่คำตอบไปไม่ถึงเครื่อง) จำไว้ใน CacheService สูงสุด 6 ชั่วโมง เช็คได้เร็ว
+// 2) RowID (สมาชิกตัวที่ 9 ของแต่ละแถว): ข้ามแถวที่มี RowID อยู่ใน Log แล้ว
+//    การส่งปกติเช็คเฉพาะแถวท้าย ๆ ของ Log (แถวซ้ำมักเพิ่งถูกเขียน) ส่วนการอัปโหลดไฟล์เช็คทั้งชีท
 var SAVED_BATCH_CACHE_PREFIX = "savedBatch_";
 var SAVED_BATCH_CACHE_TTL = 21600;
+var ROW_ID_RECENT_SCAN_DEPTH = 10000;
 
 function saveBatchData(jsonString, batchId) {
+  return writeLogRows_(jsonString, batchId, ROW_ID_RECENT_SCAN_DEPTH);
+}
+
+// อัปโหลดแถวจากไฟล์คิวที่ Export ไว้ (ไฟล์เดิมอัปโหลดซ้ำได้ แถวที่มีอยู่แล้วจะถูกข้าม)
+function uploadQueueRows(jsonString, passwordInput) {
+  if (passwordInput !== ADMIN_PASSWORD) return "Error: รหัสผ่านไม่ถูกต้อง";
+  return writeLogRows_(jsonString, "", 0);
+}
+
+// scanDepth = จำนวนแถวท้ายของ Log ที่ใช้เช็ค RowID ซ้ำ (0 = ทั้งชีท)
+function writeLogRows_(jsonString, batchId, scanDepth) {
   try {
     var dataArray = JSON.parse(jsonString);
     if (!dataArray || dataArray.length === 0) return "Empty";
@@ -216,16 +254,39 @@ function saveBatchData(jsonString, batchId) {
     }
 
     var lock = LockService.getScriptLock();
-    if (lock.tryLock(10000)) {
-       // เช็คภายใต้ lock เพื่อไม่ให้สอง request ของ batch เดียวกันเขียนพร้อมกันได้
+    if (!lock.tryLock(10000)) return "Error: Server Busy (Try again)";
+    try {
+       // เช็คภายใต้ lock เพื่อไม่ให้สอง request ของข้อมูลชุดเดียวกันเขียนพร้อมกันได้
        if (cache && cache.get(SAVED_BATCH_CACHE_PREFIX + batchId)) {
-         lock.releaseLock();
-         return "Saved " + dataArray.length + " (duplicate skipped)";
+         return "Saved 0 (skipped " + dataArray.length + " duplicates)";
        }
        var shiftColumn = ensureLogShiftColumn_(logSheet); // 1-based column number
        var scanGroupColumn = ensureLogScanGroupColumn_(logSheet); // 1-based column number
-       var writeWidth = Math.max(shiftColumn, scanGroupColumn, 6);
-       var rowsToWrite = dataArray.map(function(row) {
+       var rowIdColumn = ensureLogRowIdColumn_(logSheet); // 1-based column number
+       var writeWidth = Math.max(shiftColumn, scanGroupColumn, rowIdColumn, 6);
+
+       var existingIds = {};
+       var lastRow = logSheet.getLastRow();
+       var dataRows = lastRow - 1;
+       if (dataRows > 0) {
+         var depth = scanDepth > 0 ? Math.min(scanDepth, dataRows) : dataRows;
+         var ids = logSheet.getRange(lastRow - depth + 1, rowIdColumn, depth, 1).getValues();
+         for (var i = 0; i < ids.length; i++) {
+           var id = String(ids[i][0] || "").trim();
+           if (id) existingIds[id] = true;
+         }
+       }
+
+       var skipped = 0;
+       var rowsToWrite = [];
+       dataArray.forEach(function(row) {
+         if (!Array.isArray(row)) { skipped++; return; }
+         var rowId = row.length > 8 ? String(row[8] || "").trim() : "";
+         if (rowId) {
+           if (existingIds[rowId]) { skipped++; return; }
+           existingIds[rowId] = true; // กันแถวซ้ำกันเองในชุดเดียวกันด้วย
+         }
+
          var output = [];
          for (var col = 0; col < writeWidth; col++) output.push("");
 
@@ -238,19 +299,21 @@ function saveBatchData(jsonString, batchId) {
          output[shiftColumn - 1] = normalizeShiftName_(row.length > 6 ? row[6] : "");
          // Client รุ่นใหม่ส่ง ScanGroupID มาในสมาชิกตัวที่ 8 (index 7)
          output[scanGroupColumn - 1] = row.length > 7 ? String(row[7] || "").trim() : "";
-         return output;
+         // Client รุ่นใหม่ส่ง RowID มาในสมาชิกตัวที่ 9 (index 8)
+         output[rowIdColumn - 1] = rowId;
+         rowsToWrite.push(output);
        });
 
-       var lastRow = logSheet.getLastRow();
-       logSheet.getRange(lastRow + 1, 1, rowsToWrite.length, writeWidth).setValues(rowsToWrite);
-       SpreadsheetApp.flush();
+       if (rowsToWrite.length > 0) {
+         logSheet.getRange(lastRow + 1, 1, rowsToWrite.length, writeWidth).setValues(rowsToWrite);
+         SpreadsheetApp.flush();
+       }
        if (cache) {
          try { cache.put(SAVED_BATCH_CACHE_PREFIX + batchId, "1", SAVED_BATCH_CACHE_TTL); } catch (e) {}
        }
+       return "Saved " + rowsToWrite.length + (skipped ? " (skipped " + skipped + " duplicates)" : "");
+    } finally {
        lock.releaseLock();
-       return "Saved " + dataArray.length;
-    } else {
-       return "Error: Server Busy (Try again)";
     }
   } catch (e) {
     return "Error: " + e.message;

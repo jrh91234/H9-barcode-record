@@ -130,6 +130,9 @@
       .model-item { display: flex; justify-content: space-between; font-size: 0.9rem; color: #555; padding: 2px 0; }
       .model-item strong { color: #1565C0; font-size: 1.1em;}
 
+      .queue-file-btn { cursor:pointer; font-size:11px; padding:2px 8px; border-radius:10px; border:1px solid #aaa; color:#ddd; background:transparent; }
+      #storage-full-banner { display:none; background:#C62828; color:#fff; font-weight:bold; text-align:center; padding:6px 10px; font-size:14px; }
+      body.dashboard-mode .queue-file-btn { display:none; }
       .status-bar { background: rgba(51, 51, 51, 0.9); color: white; padding: 5px 15px; display: flex; justify-content: flex-start; gap: 20px; font-size: 12px; align-items: center; z-index: 10; }
       
       .modal-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.8); z-index: 1000; display: none; justify-content: center; align-items: center; backdrop-filter: blur(3px); }
@@ -238,7 +241,11 @@
     <div class="status-bar">
       <div>Pending: <span id="pending-count">0</span></div>
       <div id="sync-status" style="margin-left:10px;">System Ready</div>
+      <button class="queue-file-btn" onclick="exportPendingQueue(false)" title="บันทึกยอดที่ยังไม่ได้ส่งเป็นไฟล์ CSV (เปิดด้วย Excel ได้)">Export คิว</button>
+      <button class="queue-file-btn" onclick="startQueueUpload()" title="อัปโหลดไฟล์คิวที่ Export ไว้ขึ้น Sheet (แถวที่บันทึกแล้วจะถูกข้าม)">Upload ไฟล์คิว</button>
+      <input type="file" id="queue-file-input" accept=".csv,text/csv" style="display:none" onchange="handleQueueFile(this)">
     </div>
+    <div id="storage-full-banner">⚠ พื้นที่สำรองในเครื่องเต็ม — ระบบบันทึกยอดค้างส่งเป็นไฟล์ CSV ให้อัตโนมัติ (โฟลเดอร์ Downloads) · เก็บไฟล์ไว้ แล้วกด "Upload ไฟล์คิว" เมื่อเน็ตกลับมาถ้ายอดยังไม่ขึ้น Sheet ⚠</div>
 
     <div class="modal-overlay" id="jobModal">
       <div class="modal-box">
@@ -402,18 +409,54 @@
       // รีเฟรชหน้า/ปิดเบราว์เซอร์/เครื่องดับระหว่างเน็ตล่ม (เวลาในแถวคือเวลาที่สแกนจริงอยู่แล้ว)
       var PENDING_QUEUE_KEY = 'pending_queue';
       var INFLIGHT_BATCH_KEY = 'pending_inflight_batch';
+      // แต่ละแถวในคิว: [Timestamp, Job, Model, Barcode, Status, Station, Shift, ScanGroupID, RowID]
+      // RowID ไม่ซ้ำกันทุกแถว server ใช้ข้ามแถวที่บันทึกไปแล้ว (ส่งซ้ำ/อัปโหลดไฟล์ซ้ำก็ไม่เกิดแถวซ้ำ)
+      var SYNC_CHUNK_SIZE = 500;          // ส่งขึ้น Sheet ครั้งละไม่เกินเท่านี้ ไม่ให้ก้อนใหญ่จนหมดเวลา
+      var STORAGE_FULL_EXPORT_EVERY = 500; // ระหว่างพื้นที่เต็ม Export ไฟล์ใหม่ทุก ๆ เท่านี้แถวที่เพิ่มขึ้น
+      var QUEUE_CSV_HEADER = ["Timestamp", "Job", "Model", "Barcode", "Status", "Station", "Shift", "ScanGroupID", "RowID"];
+      var isStorageFull = false;
+      var lastAutoExportSize = 0;
       function loadPendingQueue() {
           try {
               var q = JSON.parse(localStorage.getItem(PENDING_QUEUE_KEY));
-              return Array.isArray(q) ? q : [];
+              if (!Array.isArray(q)) return [];
+              q.forEach(function(row) { if (!row[8]) row[8] = generateScanGroupId(); });
+              return q;
           } catch (e) { return []; }
       }
       function savePendingQueue() {
           try {
               localStorage.setItem(PENDING_QUEUE_KEY, JSON.stringify(pendingQueue));
+              if (isStorageFull) setStorageFull(false);
           } catch (e) {
               console.error("savePendingQueue failed:", e);
+              if (!isStorageFull) setStorageFull(true);
+              // คิวยังอยู่ในหน่วยความจำและยังส่งต่อได้ แต่ถ้าเครื่องดับจะหาย จึงสำรองเป็นไฟล์แทน
+              if (pendingQueue.length - lastAutoExportSize >= STORAGE_FULL_EXPORT_EVERY || lastAutoExportSize === 0) {
+                  exportPendingQueue(true);
+              }
+              // สำเนาเก่าในเครื่องมีแถวน้อยกว่าไฟล์ที่เพิ่ง Export ลบทิ้งเพื่อคืนพื้นที่ให้ค่าอื่น
+              // (ยอดบนจอ, Job, Station) ยังบันทึกได้ต่อ
+              if (lastAutoExportSize > 0) {
+                  try { localStorage.removeItem(PENDING_QUEUE_KEY); } catch (e2) {}
+              }
           }
+      }
+      // เขียนค่าลงเครื่องโดยไม่ให้ error (เช่นพื้นที่เต็ม) ทำให้การสแกนหยุดกลางทาง
+      function safeSetItem(key, value) {
+          try {
+              localStorage.setItem(key, value);
+              return true;
+          } catch (e) {
+              console.error("localStorage.setItem failed for " + key + ":", e);
+              return false;
+          }
+      }
+      function setStorageFull(full) {
+          isStorageFull = full;
+          if (!full) lastAutoExportSize = 0;
+          var el = document.getElementById('storage-full-banner');
+          if (el) el.style.display = full ? 'block' : 'none';
       }
       // batch ที่ส่งไปแล้วแต่ยังไม่ได้คำยืนยัน: {id, count} = แถวแรก count แถวของคิว
       // ส่งซ้ำด้วย id เดิมเสมอ ให้ server ข้ามได้ถ้าเคยบันทึกแล้ว (กันแถวซ้ำ)
@@ -523,7 +566,7 @@
       function initializeShiftSelection() {
           var savedShift = normalizeShiftCode(localStorage.getItem('current_shift'));
           currentShift = savedShift || getDefaultShiftCode();
-          localStorage.setItem('current_shift', currentShift);
+          safeSetItem('current_shift', currentShift);
       }
 
       function updateShiftDisplay() {
@@ -569,7 +612,7 @@
           var todayStr = now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0') + '-' + String(now.getDate()).padStart(2, '0');
           if (localStorage.getItem('shift_rotation_prompted_date') === todayStr) return; // เด้งแล้ววันนี้ ไม่เด้งซ้ำ
 
-          localStorage.setItem('shift_rotation_prompted_date', todayStr);
+          safeSetItem('shift_rotation_prompted_date', todayStr);
           openShiftModal(true);
       }
 
@@ -582,7 +625,7 @@
           var normalized = normalizeShiftCode(code);
           if (!normalized) return;
           currentShift = normalized;
-          localStorage.setItem('current_shift', currentShift);
+          safeSetItem('current_shift', currentShift);
           updateShiftDisplay();
           closeShiftModal();
       }
@@ -607,9 +650,9 @@
 
           productionHistory = {};
           jobScanHistory = {};
-          localStorage.setItem('prod_shift_key', currentShiftKey);
-          localStorage.setItem('prod_history', JSON.stringify(productionHistory));
-          localStorage.setItem('job_scan_history', JSON.stringify(jobScanHistory));
+          safeSetItem('prod_shift_key', currentShiftKey);
+          safeSetItem('prod_history', JSON.stringify(productionHistory));
+          safeSetItem('job_scan_history', JSON.stringify(jobScanHistory));
           updateUI();
           hydrateFromSheet();
       }
@@ -645,9 +688,9 @@
         if (lastShiftKey !== currentShiftKey && !isDashboardMode) {
             productionHistory = {};
             jobScanHistory = {}; // ตัวนับสำรองรายวันของเครื่องนี้ (ยอดจริงของ Job อ่านจาก Sheet)
-            localStorage.setItem('prod_shift_key', currentShiftKey);
-            localStorage.setItem('prod_history', JSON.stringify(productionHistory));
-            localStorage.setItem('job_scan_history', JSON.stringify(jobScanHistory));
+            safeSetItem('prod_shift_key', currentShiftKey);
+            safeSetItem('prod_history', JSON.stringify(productionHistory));
+            safeSetItem('job_scan_history', JSON.stringify(jobScanHistory));
         }
 
         updateJobDisplay();
@@ -682,7 +725,7 @@
             google.script.run.withSuccessHandler(function(m) {
                if (!currentModel && m) {
                   currentModel = m;
-                  localStorage.setItem('current_model', currentModel);
+                  safeSetItem('current_model', currentModel);
                   document.getElementById('current-model-display').innerText = currentModel;
                   if(!isDashboardMode) restoreHistory();
                }
@@ -769,7 +812,7 @@
                   tempHistory[m].hourly[h]++;
               });
               productionHistory = tempHistory;
-              localStorage.setItem('prod_history', JSON.stringify(productionHistory));
+              safeSetItem('prod_history', JSON.stringify(productionHistory));
               updateUI();
           }).getTodayProductionData();
       }
@@ -963,7 +1006,7 @@
             for (var q = 0; q < scanQty; q++) {
                 // Manual mode ไม่มี Job จริง บันทึกเป็น Job ที่ระบบสร้าง (AUTO-...) ของรุ่นนั้นแทน
                 var logJob = currentJob === "MANUAL_MODE" ? getAutoJobId(currentModel) : currentJob;
-                pendingQueue.push([dateStr, logJob, currentModel, barcode, "OK", currentStation || "Unknown", getShiftLabel(currentShift), scanGroupId]);
+                pendingQueue.push([dateStr, logJob, currentModel, barcode, "OK", currentStation || "Unknown", getShiftLabel(currentShift), scanGroupId, generateScanGroupId()]);
             }
             savePendingQueue();
           }
@@ -1016,7 +1059,7 @@
           }
           jobUnsentDelta[job] = (jobUnsentDelta[job] || 0) + qty;
           jobScanHistory[job] = (jobScanHistory[job] || 0) + qty;
-          localStorage.setItem('job_scan_history', JSON.stringify(jobScanHistory));
+          safeSetItem('job_scan_history', JSON.stringify(jobScanHistory));
       }
 
       function fetchJobScanCounts() {
@@ -1153,7 +1196,7 @@
               var removed = Math.min(count, localCount);
               if (removed > 0) {
                   jobScanHistory[job] = localCount - removed;
-                  localStorage.setItem('job_scan_history', JSON.stringify(jobScanHistory));
+                  safeSetItem('job_scan_history', JSON.stringify(jobScanHistory));
               }
               jobDoneNotified[job] = false; // ยอดลดแล้ว ถ้าสแกนจนครบอีกครั้งต้องแจ้งใหม่
               updateJobDisplay();
@@ -1198,7 +1241,7 @@
          var h = new Date().getHours().toString().padStart(2, '0');
          if(!productionHistory[model].hourly[h]) productionHistory[model].hourly[h] = 0;
          productionHistory[model].hourly[h] += qty;
-         localStorage.setItem('prod_history', JSON.stringify(productionHistory));
+         safeSetItem('prod_history', JSON.stringify(productionHistory));
       }
 
       // กู้ CURRENT MODEL COUNT, TOTAL THIS SHIFT และยอดรายชั่วโมงจาก Log ของ Line นี้
@@ -1244,8 +1287,8 @@
                   });
 
                   productionHistory = hist;
-                  localStorage.setItem('prod_shift_key', getCurrentShiftKey());
-                  localStorage.setItem('prod_history', JSON.stringify(productionHistory));
+                  safeSetItem('prod_shift_key', getCurrentShiftKey());
+                  safeSetItem('prod_history', JSON.stringify(productionHistory));
                   updateUI();
               } catch (e) {
                   console.error("hydrateFromSheet error:", e);
@@ -1465,7 +1508,7 @@
       function enableManualMode() {
          if(confirm("Enable Manual Mode?\n(Scan ANY model without verification)")) {
              currentJob = "MANUAL_MODE";
-             localStorage.setItem('current_job', currentJob);
+             safeSetItem('current_job', currentJob);
              updateJobDisplay();
              closeJobModal();
          }
@@ -1519,7 +1562,7 @@
 
           var stationChanged = (val !== currentStation);
           currentStation = val;
-          localStorage.setItem('station_id', currentStation);
+          safeSetItem('station_id', currentStation);
           updateStationDisplay();
           document.getElementById('stationModal').style.display = 'none';
           refocusTrap();
@@ -1576,7 +1619,7 @@
 
       function applyJobChange(jobVal, modelVal) {
           currentJob = jobVal;
-          localStorage.setItem('current_job', currentJob);
+          safeSetItem('current_job', currentJob);
           
           if (!currentModel || (modelVal && currentModel !== modelVal)) {
                setCurrentModel(modelVal);
@@ -1592,7 +1635,7 @@
       var tempNewModel = "";
       function setCurrentModel(model) {
           currentModel = model; document.getElementById('current-model-display').innerText = currentModel;
-          localStorage.setItem('current_model', currentModel);
+          safeSetItem('current_model', currentModel);
           if (isGoogleScriptReady()) {
               google.script.run.setServerModel(currentModel);
           } else {
@@ -1652,7 +1695,7 @@
       function logChangeover(job) {
           if (isTestMode) return;
           pendingQueue.push([new Date().toLocaleString('th-TH'), job || "", currentModel, "FROM " + (changeoverFromModel || "-"),
-              "CHANGEOVER", currentStation || "Unknown", getShiftLabel(currentShift), ""]);
+              "CHANGEOVER", currentStation || "Unknown", getShiftLabel(currentShift), "", generateScanGroupId()]);
           savePendingQueue();
           updateSyncStatus();
       }
@@ -1660,7 +1703,7 @@
       // job = null หมายถึงสร้าง Job อัตโนมัติ (AUTO-...)
       function pickJobAfterChange(job) {
           currentJob = job || getAutoJobId(currentModel);
-          localStorage.setItem('current_job', currentJob);
+          safeSetItem('current_job', currentJob);
           logChangeover(currentJob);
           document.getElementById('jobPickModal').style.display = 'none';
           updateJobDisplay();
@@ -1726,6 +1769,7 @@
       var isSyncing = false;
       function syncData() {
          if (isSyncing) return; // มี batch ค้างส่งอยู่ ห้ามส่งคิวชุดเดิมซ้ำ
+         if (isUploadingQueueFile) return; // กำลังอัปโหลดไฟล์คิว รอให้เสร็จก่อน
          if (pendingQueue.length === 0) return;
          if (!isGoogleScriptReady()) {
             markLocalPreviewMode();
@@ -1734,7 +1778,7 @@
          // ส่ง batch เดิมให้สำเร็จก่อน (id เดิม แถวเดิม) แล้วค่อยเริ่ม batch ใหม่
          var batch = loadInflightBatch();
          if (!batch || batch.count > pendingQueue.length) {
-             batch = { id: generateScanGroupId(), count: pendingQueue.length };
+             batch = { id: generateScanGroupId(), count: Math.min(pendingQueue.length, SYNC_CHUNK_SIZE) };
              saveInflightBatch(batch);
          }
          var batchToSend = pendingQueue.slice(0, batch.count);
@@ -1781,6 +1825,147 @@
          }).saveBatchData(JSON.stringify(batchToSend), batch.id);
       }
       function updateSyncStatus() { var el = document.getElementById('pending-count'); if(el) el.innerText = pendingQueue.length; }
+
+      // ---- สำรองคิวเป็นไฟล์ CSV / อัปโหลดกลับ ----
+      function csvEscape(v) {
+          var t = String(v === undefined || v === null ? "" : v);
+          return /[",\r\n]/.test(t) ? '"' + t.replace(/"/g, '""') + '"' : t;
+      }
+      function parseCsv(text) {
+          var rows = [], row = [], field = "", inQuotes = false;
+          for (var i = 0; i < text.length; i++) {
+              var c = text[i];
+              if (inQuotes) {
+                  if (c === '"') {
+                      if (text[i + 1] === '"') { field += '"'; i++; } else inQuotes = false;
+                  } else field += c;
+              } else if (c === '"') inQuotes = true;
+              else if (c === ',') { row.push(field); field = ""; }
+              else if (c === '\n' || c === '\r') {
+                  if (c === '\r' && text[i + 1] === '\n') i++;
+                  row.push(field); field = "";
+                  if (row.some(function(f) { return f !== ""; })) rows.push(row);
+                  row = [];
+              } else field += c;
+          }
+          row.push(field);
+          if (row.some(function(f) { return f !== ""; })) rows.push(row);
+          return rows;
+      }
+
+      // auto = true เมื่อพื้นที่ในเครื่องเต็ม (ไฟล์ล่าสุดมีทุกแถวที่ค้าง จึงใช้ไฟล์ล่าสุดไฟล์เดียวได้)
+      function exportPendingQueue(auto) {
+          if (pendingQueue.length === 0) {
+              if (!auto) alert("ไม่มียอดค้างส่ง");
+              refocusTrap();
+              return;
+          }
+          var lines = [QUEUE_CSV_HEADER.join(",")];
+          pendingQueue.forEach(function(row) {
+              var out = [];
+              for (var i = 0; i < QUEUE_CSV_HEADER.length; i++) out.push(csvEscape(row[i]));
+              lines.push(out.join(","));
+          });
+          var stamp = new Date().toISOString().replace(/[-:]/g, "").replace("T", "-").slice(0, 15);
+          var name = "h9-queue-" + String(currentStation || "station").replace(/[^\w-]+/g, "_") + "-" + stamp + ".csv";
+          try {
+              // BOM ให้ Excel อ่านภาษาไทยถูก
+              var blob = new Blob(["\ufeff" + lines.join("\r\n")], { type: "text/csv;charset=utf-8" });
+              var a = document.createElement('a');
+              a.href = URL.createObjectURL(blob);
+              a.download = name;
+              document.body.appendChild(a);
+              a.click();
+              setTimeout(function() { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+              if (auto) lastAutoExportSize = pendingQueue.length;
+              document.getElementById('sync-status').innerText = "Exported " + pendingQueue.length + " rows → " + name;
+              document.getElementById('sync-status').style.color = "#FFD700";
+          } catch (e) {
+              console.error("exportPendingQueue failed:", e);
+              if (!auto) alert("Export ไม่สำเร็จ: " + e.message);
+          }
+          refocusTrap();
+      }
+
+      function startQueueUpload() {
+          if (!isGoogleScriptReady()) { alert("ยังเชื่อมต่อ Server ไม่ได้ ลองใหม่เมื่อเน็ตกลับมา"); return; }
+          document.getElementById('queue-file-input').click();
+      }
+
+      var isUploadingQueueFile = false;
+      function handleQueueFile(input) {
+          var file = input.files && input.files[0];
+          input.value = "";
+          if (!file) { refocusTrap(); return; }
+          if (isUploadingQueueFile) { alert("กำลังอัปโหลดไฟล์อื่นอยู่"); return; }
+          var reader = new FileReader();
+          reader.onload = function() {
+              var rows = parseCsv(String(reader.result || "").replace(/^\ufeff/, ""));
+              var header = rows.shift() || [];
+              var idx = QUEUE_CSV_HEADER.map(function(h) {
+                  return header.map(function(x) { return String(x).trim(); }).indexOf(h);
+              });
+              if (idx.indexOf(-1) !== -1) {
+                  alert("ไฟล์ไม่ใช่ไฟล์คิวจากระบบนี้ (หัวคอลัมน์ไม่ตรง)");
+                  refocusTrap();
+                  return;
+              }
+              var data = [], noId = 0;
+              rows.forEach(function(r) {
+                  var rec = idx.map(function(i) { return r[i] === undefined ? "" : r[i]; });
+                  if (!String(rec[8]).trim()) { noId++; return; } // ไม่มี RowID เช็คซ้ำไม่ได้ ไม่อัปโหลด
+                  data.push(rec);
+              });
+              if (data.length === 0) { alert("ไม่มีแถวที่อัปโหลดได้ในไฟล์นี้"); refocusTrap(); return; }
+              var pass = prompt("อัปโหลด " + data.length + " แถวจาก " + file.name +
+                  (noId ? "\n(ข้าม " + noId + " แถวที่ไม่มี RowID)" : "") +
+                  "\nแถวที่บันทึกใน Sheet แล้วจะถูกข้าม\n\nใส่รหัส Admin:");
+              if (pass === null) { refocusTrap(); return; }
+              uploadQueueChunks(data, pass);
+          };
+          reader.onerror = function() { alert("อ่านไฟล์ไม่สำเร็จ"); refocusTrap(); };
+          reader.readAsText(file, "utf-8");
+      }
+
+      function uploadQueueChunks(data, pass) {
+          isUploadingQueueFile = true;
+          var saved = 0, skipped = 0, pos = 0;
+          var status = document.getElementById('sync-status');
+          function finish(msg, color) {
+              isUploadingQueueFile = false;
+              status.innerText = msg;
+              status.style.color = color;
+              alert(msg);
+              fetchJobScanCounts();
+              hydrateFromSheet();
+              refocusTrap();
+          }
+          function next() {
+              if (pos >= data.length) {
+                  finish("Upload เสร็จ: บันทึกใหม่ " + saved + " แถว, ข้ามที่มีอยู่แล้ว " + skipped + " แถว", "#00e676");
+                  return;
+              }
+              if (isSyncing) { setTimeout(next, 1000); return; } // รอคิวปกติส่งเสร็จก่อน ไม่ให้ทับ lock กัน
+              var chunk = data.slice(pos, pos + SYNC_CHUNK_SIZE);
+              status.innerText = "Uploading " + Math.min(pos + chunk.length, data.length) + "/" + data.length + "...";
+              status.style.color = "#FFD700";
+              google.script.run.withSuccessHandler(function(res) {
+                  var m = typeof res === "string" ? res.match(/^Saved (\d+)(?: \(skipped (\d+) duplicates\))?/) : null;
+                  if (!m) {
+                      finish("Upload หยุดที่แถว " + pos + ": " + res + " (อัปโหลดไฟล์เดิมซ้ำได้ แถวที่ขึ้นแล้วจะถูกข้าม)", "red");
+                      return;
+                  }
+                  saved += Number(m[1]);
+                  skipped += Number(m[2] || 0);
+                  pos += chunk.length;
+                  next();
+              }).withFailureHandler(function(err) {
+                  var errMsg = (err && err.message) ? err.message : (err || "Unknown error");
+                  finish("Upload หยุดที่แถว " + pos + ": " + errMsg + " (อัปโหลดไฟล์เดิมซ้ำได้ แถวที่ขึ้นแล้วจะถูกข้าม)", "red");
+              }).uploadQueueRows(JSON.stringify(chunk), pass);
+          }
+          next();
+      }
       function updateClock() {
          document.getElementById('clock-display').innerText = new Date().toLocaleTimeString('th-TH', {hour:'2-digit', minute:'2-digit'});
          checkShiftRollover();
@@ -1791,7 +1976,7 @@
             : "Reset History?\n(ล้างเฉพาะหน้าจอ ข้อมูลใน Sheet ยังคงอยู่)";
          if(confirm(msg)) {
             productionHistory = {};
-            localStorage.setItem('prod_history', JSON.stringify(productionHistory));
+            safeSetItem('prod_history', JSON.stringify(productionHistory));
             updateUI();
          }
          refocusTrap();
@@ -1822,7 +2007,7 @@
             if (preTestHistory !== null) {
                productionHistory = preTestHistory;
                preTestHistory = null;
-               localStorage.setItem('prod_history', JSON.stringify(productionHistory));
+               safeSetItem('prod_history', JSON.stringify(productionHistory));
                updateUI();
             }
             jobTestDelta = {};
